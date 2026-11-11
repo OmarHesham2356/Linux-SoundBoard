@@ -136,13 +136,24 @@ fn check_engine() {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "<unknown>".to_string());
     println!("  UI binary       : {ui_binary}");
+    #[cfg(target_os = "linux")]
     println!(
         "  expected        : version={} protocol={} schema={}",
         crate::app_meta::APP_VERSION,
         crate::audio::engine_ipc::ENGINE_PROTOCOL_VERSION,
         crate::config::CURRENT_SCHEMA_VERSION
     );
+    #[cfg(not(target_os = "linux"))]
+    println!(
+        "  expected        : version={} schema={}",
+        crate::app_meta::APP_VERSION,
+        crate::config::CURRENT_SCHEMA_VERSION
+    );
 
+    #[cfg(not(target_os = "linux"))]
+    println!("  engine          : in-process playback on this platform");
+
+    #[cfg(target_os = "linux")]
     match crate::audio::engine_ipc::engine_info() {
         Ok(info) => {
             println!("  engine binary   : {}", info.binary_path);
