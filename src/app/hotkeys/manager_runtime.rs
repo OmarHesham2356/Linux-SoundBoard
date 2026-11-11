@@ -1,6 +1,7 @@
 use log::{info, warn};
 use std::sync::mpsc::SyncSender;
 
+#[cfg(target_os = "linux")]
 use crate::app_meta::{BACKEND_ENV_VAR, WAYLAND_BACKEND, X11_BACKEND};
 
 use super::backend_runtime::HotkeyBackend;

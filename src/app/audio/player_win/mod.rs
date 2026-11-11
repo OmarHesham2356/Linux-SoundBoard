@@ -318,8 +318,6 @@ impl AudioPlayer {
         _window_ms: u32,
         _attack_ms: u32,
         _release_ms: u32,
-        _target_lufs: f64,
-        _ceiling_db: f64,
     ) {
     }
 

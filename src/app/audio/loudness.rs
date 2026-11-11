@@ -7,7 +7,10 @@ use std::time::Duration;
 use ebur128::{EbuR128, Mode};
 use log::{debug, warn};
 
+#[cfg(target_os = "linux")]
 use super::player::{DecodedAudioSource, DecodedPlaybackSource};
+#[cfg(windows)]
+use super::player_win::{DecodedAudioSource, DecodedPlaybackSource};
 
 /// Cap boost so very quiet files do not explode in volume.
 const MAX_GAIN_FACTOR: f32 = 8.0;

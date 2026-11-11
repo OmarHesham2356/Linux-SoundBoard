@@ -94,6 +94,7 @@ pub fn run() {
     init_logging();
     handoff_to_newer_user_install_if_needed();
     crate::diagnostics::audit::init_from_env();
+    #[cfg(target_os = "linux")]
     if std::env::args().any(|arg| arg == "--audio-engine") {
         std::process::exit(crate::audio::engine_server::run());
     }
