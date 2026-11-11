@@ -233,6 +233,14 @@ impl PlayerState {
         for sample in output.iter_mut() {
             *sample = sample.clamp(-1.0, 1.0);
         }
+
+        // A finished solo playback must not keep every other sound muted.
+        if let Some(solo) = self.solo_play_id.clone() {
+            let still_running = self.voices.get(&solo).is_some_and(|voice| !voice.finished);
+            if !still_running {
+                self.solo_play_id = None;
+            }
+        }
     }
 }
 
@@ -427,7 +435,15 @@ impl AudioPlayer {
 
     pub fn stop_sound(&self, sound_id: &str) -> Result<(), EngineError> {
         let mut state = self.state.lock();
+        let solo_stopped = state
+            .solo_play_id
+            .as_ref()
+            .and_then(|id| state.voices.get(id))
+            .is_some_and(|voice| voice.sound_id == sound_id);
         state.voices.retain(|_, voice| voice.sound_id != sound_id);
+        if solo_stopped {
+            state.solo_play_id = None;
+        }
         Ok(())
     }
 
