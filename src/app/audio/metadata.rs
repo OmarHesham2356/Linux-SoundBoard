@@ -10,7 +10,12 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
+#[cfg(target_os = "linux")]
 use super::player::{
+    is_strict_audio_container, select_audio_track, DecodedAudioSource, DecodedPlaybackSource,
+};
+#[cfg(windows)]
+use super::player_win::{
     is_strict_audio_container, select_audio_track, DecodedAudioSource, DecodedPlaybackSource,
 };
 

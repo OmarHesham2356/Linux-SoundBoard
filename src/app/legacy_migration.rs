@@ -1,6 +1,9 @@
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -9,6 +12,28 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+fn set_private_permissions(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    #[cfg(windows)]
+    options.share_mode(0);
+    options.open(path)
+}
 
 use crate::config::{ControlHotkeyAction, FolderTabBinding, Settings, Sound};
 use crate::library_store::{
@@ -736,7 +761,7 @@ fn ensure_backup(
     let backup = source.with_file_name("config.json.pre-v8-backup");
     if backup.exists() {
         if sha256(&backup)? == expected_sha256 {
-            fs::set_permissions(backup, fs::Permissions::from_mode(0o600))?;
+            set_private_permissions(&backup)?;
             return Ok(());
         }
         return Err(LegacyMigrationError::Invalid(
@@ -755,11 +780,7 @@ fn ensure_backup(
     let result = (|| {
         observer(LegacyMigrationBoundary::BeforeBackupWrite)?;
         let mut reader = BufReader::new(fs::File::open(source)?);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&candidate)?;
+        let mut file = create_private_file(&candidate)?;
         let mut buffer = [0_u8; 64 * 1024];
         loop {
             observer(LegacyMigrationBoundary::BeforeBackupWrite)?;
@@ -1291,11 +1312,7 @@ pub fn restore_legacy_backup(
 
     let result = (|| -> Result<(), LegacyMigrationError> {
         let mut reader = BufReader::new(fs::File::open(&backup)?);
-        let file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&candidate)?;
+        let file = create_private_file(&candidate)?;
         let mut writer = BufWriter::new(&file);
         std::io::copy(&mut reader, &mut writer)?;
         writer.flush()?;
@@ -1322,7 +1339,7 @@ pub fn restore_legacy_backup(
             }
             return Err(error.into());
         }
-        fs::set_permissions(config_path, fs::Permissions::from_mode(0o600))?;
+        set_private_permissions(config_path)?;
         if let Some(parent) = config_path.parent() {
             fs::File::open(parent)?.sync_all()?;
         }
@@ -1529,11 +1546,13 @@ mod tests {
             &noop_observer(),
         )
         .expect("create backup");
+        #[cfg(unix)]
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o500))
             .expect("make destination read-only");
 
         let result = migrate_legacy_database(&source, &destination);
 
+        #[cfg(unix)]
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
             .expect("restore destination permissions");
         assert!(result.is_err());

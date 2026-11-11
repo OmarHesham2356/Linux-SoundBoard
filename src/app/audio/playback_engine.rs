@@ -1,6 +1,9 @@
 //! Playback transport seam for commands and tests.
 
+#[cfg(target_os = "linux")]
 use super::player::{AudioPlayer, EngineError, PlaybackPosition};
+#[cfg(windows)]
+use super::player_win::{AudioPlayer, EngineError, PlaybackPosition};
 
 /// Playback transport operations invoked by `commands::playback`.
 pub trait PlaybackEngine: Send + Sync {

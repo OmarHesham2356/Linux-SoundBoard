@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg(target_env = "gnu")]
+#[cfg(all(target_env = "gnu", not(windows)))]
 fn limit_malloc_arenas() {
     const M_ARENA_MAX: i32 = -8;
     extern "C" {
@@ -12,7 +12,7 @@ fn limit_malloc_arenas() {
     }
 }
 
-#[cfg(not(target_env = "gnu"))]
+#[cfg(any(not(target_env = "gnu"), windows))]
 fn limit_malloc_arenas() {}
 
 fn main() {

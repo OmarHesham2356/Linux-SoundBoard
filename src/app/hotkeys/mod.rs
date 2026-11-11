@@ -4,22 +4,40 @@ mod group;
 mod manager_runtime;
 mod parsing;
 mod projection;
+#[cfg(target_os = "linux")]
 mod swhkd_backend;
+#[cfg(target_os = "linux")]
 mod swhkd_config;
+#[cfg(target_os = "linux")]
 mod swhkd_install;
+#[cfg(windows)]
+#[path = "swhkd_install_win.rs"]
+mod swhkd_install;
+#[cfg(target_os = "linux")]
 mod swhkd_process;
+#[cfg(windows)]
+mod windows_backend;
+#[cfg(target_os = "linux")]
 mod x11_backend;
 
 /// Marks a hotkey release in the hotkey dispatch channel.
 pub const HOTKEY_RELEASE_PREFIX: &str = "release:";
 
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_SOCKET_POLL_INTERVAL_MS: u64 = 100;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_RELOAD_PRE_SIGNAL_WAIT_MS: u64 = 100;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_RELOAD_POST_SIGNAL_WAIT_MS: u64 = 200;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_STARTUP_VERIFY_WAIT_MS: u64 = 500;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_STALE_TERMINATE_TIMEOUT_MS: u64 = 2000;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_MONITOR_INTERVAL_SECS: u64 = 30;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_PIPE_OPEN_RETRY_SECS: u64 = 1;
+#[cfg(target_os = "linux")]
 pub(super) const SWHKD_PIPE_REOPEN_DELAY_MS: u64 = 100;
 
 pub(crate) use error::HotkeyError;

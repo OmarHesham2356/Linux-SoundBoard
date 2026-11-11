@@ -1,6 +1,9 @@
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,11 +35,33 @@ fn schema_6_backup_path(path: &Path) -> PathBuf {
     path.with_file_name(SCHEMA_6_BACKUP_FILE_NAME)
 }
 
+fn set_private_permissions(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    #[cfg(windows)]
+    options.share_mode(0);
+    options.open(path)
+}
+
 fn ensure_schema_6_backup(path: &Path, original: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let backup_path = schema_6_backup_path(path);
     if backup_path.exists() {
         if fs::read(&backup_path)? == original {
-            fs::set_permissions(&backup_path, fs::Permissions::from_mode(0o600))?;
+            set_private_permissions(&backup_path)?;
             return Ok(());
         }
         return Err(format!(
@@ -52,11 +77,7 @@ fn ensure_schema_6_backup(path: &Path, original: &[u8]) -> Result<(), Box<dyn st
         SAVE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        let mut tmp = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp_path)?;
+        let mut tmp = create_private_file(&tmp_path)?;
         tmp.write_all(original)?;
         tmp.sync_all()?;
 
@@ -73,7 +94,7 @@ fn ensure_schema_6_backup(path: &Path, original: &[u8]) -> Result<(), Box<dyn st
             }
             Err(err) => return Err(Box::new(err)),
         }
-        fs::set_permissions(&backup_path, fs::Permissions::from_mode(0o600))?;
+        set_private_permissions(&backup_path)?;
         if let Some(parent) = backup_path.parent() {
             fs::File::open(parent)?.sync_all()?;
         }
@@ -317,6 +338,7 @@ mod tests {
             fs::read(backup_path(&path)).expect("read backup"),
             SCHEMA_6_FIXTURE
         );
+        #[cfg(unix)]
         assert_eq!(
             fs::metadata(backup_path(&path))
                 .expect("backup metadata")

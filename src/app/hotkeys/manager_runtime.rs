@@ -6,7 +6,11 @@ use crate::app_meta::{BACKEND_ENV_VAR, WAYLAND_BACKEND, X11_BACKEND};
 use super::backend_runtime::HotkeyBackend;
 use super::error::{unsupported_key_for_backend, HotkeyError};
 use super::parse_hotkey_spec;
+#[cfg(target_os = "linux")]
 use super::swhkd_backend::SwhkdBackend;
+#[cfg(windows)]
+use super::windows_backend::WindowsBackend;
+#[cfg(target_os = "linux")]
 use super::x11_backend::X11Backend;
 
 pub struct HotkeyManager {
@@ -214,6 +218,12 @@ impl HotkeyManager {
         }
     }
 
+    #[cfg(windows)]
+    fn select_backend() -> Result<Box<dyn HotkeyBackend>, HotkeyError> {
+        WindowsBackend::new().map(|backend| Box::new(backend) as Box<dyn HotkeyBackend>)
+    }
+
+    #[cfg(target_os = "linux")]
     fn select_backend() -> Result<Box<dyn HotkeyBackend>, HotkeyError> {
         match session_backend_preference() {
             BackendPreference::Wayland => return select_wayland_backend(),
@@ -249,6 +259,12 @@ impl HotkeyManager {
             unsupported_key_for_backend("hotkey", format!("{hotkey} is invalid. {e}"))
         })?;
 
+        #[cfg(windows)]
+        {
+            let _ = spec;
+            return Ok(());
+        }
+        #[cfg(target_os = "linux")]
         match session_backend_preference() {
             BackendPreference::Wayland => spec
                 .swhkd_string()
@@ -261,11 +277,12 @@ impl HotkeyManager {
     pub fn is_healthy(&self) -> Result<(), HotkeyError> {
         match &self.backend {
             Some(backend) => {
+                #[cfg(target_os = "linux")]
                 if let Some(swhkd) = (**backend).as_any().downcast_ref::<SwhkdBackend>() {
-                    swhkd.is_healthy()
-                } else {
-                    Ok(())
+                    return swhkd.is_healthy();
                 }
+                let _ = backend;
+                Ok(())
             }
             None => Err(HotkeyError::BackendUnavailable(format!(
                 "Hotkeys unavailable: {}",
@@ -296,6 +313,7 @@ impl HotkeyManager {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackendPreference {
     Wayland,
@@ -303,6 +321,7 @@ enum BackendPreference {
     Auto,
 }
 
+#[cfg(target_os = "linux")]
 fn session_backend_preference() -> BackendPreference {
     let explicit = std::env::var(BACKEND_ENV_VAR)
         .ok()
@@ -333,6 +352,7 @@ fn session_backend_preference() -> BackendPreference {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn select_wayland_backend() -> Result<Box<dyn HotkeyBackend>, HotkeyError> {
     let mut errors = Vec::new();
 
@@ -350,6 +370,7 @@ fn select_wayland_backend() -> Result<Box<dyn HotkeyBackend>, HotkeyError> {
     )))
 }
 
+#[cfg(target_os = "linux")]
 fn select_x11_backend() -> Result<Box<dyn HotkeyBackend>, HotkeyError> {
     let mut errors = Vec::new();
 

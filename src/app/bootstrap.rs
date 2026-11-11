@@ -2,7 +2,10 @@ use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fs::{File, OpenOptions};
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
@@ -16,6 +19,7 @@ use gtk4::{Application, Window};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use log::{info, warn};
+#[cfg(unix)]
 use nix::fcntl::{Flock, FlockArg};
 
 use crate::app_meta::{
@@ -28,8 +32,12 @@ use crate::timer_registry::TimerRegistry;
 
 const ENGINE_SERVICE_UNIT: &str = "linux-soundboard-engine.service";
 const ENGINE_TARGET_UNIT: &str = "linux-soundboard-engine.target";
+#[cfg(unix)]
 static STORAGE_LOCK: OnceLock<Mutex<Option<Flock<File>>>> = OnceLock::new();
+#[cfg(windows)]
+static STORAGE_LOCK: OnceLock<Mutex<Option<File>>> = OnceLock::new();
 
+#[cfg(unix)]
 fn acquire_storage_lock_at(path: &Path) -> Result<Flock<File>, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -50,6 +58,27 @@ fn acquire_storage_lock_at(path: &Path) -> Result<Flock<File>, String> {
             path.display()
         )
     })
+}
+
+#[cfg(windows)]
+fn acquire_storage_lock_at(path: &Path) -> Result<File, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    // Deny sharing so a second process cannot open the same library.
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(path)
+        .map_err(|error| {
+            format!(
+                "Another Linux Soundboard process is using '{}': {error}",
+                path.display()
+            )
+        })
 }
 
 fn ensure_storage_lock() -> Result<(), String> {
@@ -124,6 +153,9 @@ linux_soundboard::audio::player::source_routing=info",
 }
 
 fn configure_preferred_backend() {
+    #[cfg(windows)]
+    return;
+    #[allow(unreachable_code)]
     let previous = std::env::var(BACKEND_ENV_VAR).ok();
     if previous.is_some() {
         info!(
@@ -175,6 +207,9 @@ fn configure_preferred_backend() {
 }
 
 fn configure_preferred_renderer() {
+    #[cfg(windows)]
+    return;
+    #[allow(unreachable_code)]
     let previous = std::env::var(RENDERER_ENV_VAR).ok();
     if previous.is_some() {
         info!(
@@ -269,12 +304,18 @@ enum EngineUpdateNotice {
 const ENGINE_UPDATE_HELP_URL: &str = "https://github.com/germanua/Linux-SoundBoard/blob/main/docs/TROUBLESHOOTING.md#engine-update-failed";
 const ENGINE_UNAVAILABLE_HELP_URL: &str = "https://github.com/germanua/Linux-SoundBoard/blob/main/docs/TROUBLESHOOTING.md#persistent-audio-engine-unavailable";
 
+#[cfg(target_os = "linux")]
 fn incompatible_engine_version() -> Option<String> {
     crate::audio::engine_ipc::engine_info()
         .ok()
         .and_then(|info| {
             (!crate::audio::engine_ipc::engine_info_compatible(&info)).then_some(info.app_version)
         })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn incompatible_engine_version() -> Option<String> {
+    None
 }
 
 fn engine_update_notice(
@@ -1572,6 +1613,10 @@ fn compare_release_versions(left: &str, right: &str) -> Option<Ordering> {
     Some(parse(left)?.cmp(&parse(right)?))
 }
 
+#[cfg(not(target_os = "linux"))]
+fn handoff_to_newer_user_install_if_needed() {}
+
+#[cfg(target_os = "linux")]
 fn handoff_to_newer_user_install_if_needed() {
     let kind = installation_kind();
     if kind != InstallationKind::DirectAppImage {
@@ -1604,6 +1649,7 @@ fn handoff_to_newer_user_install_if_needed() {
     std::process::exit(1);
 }
 
+#[cfg(target_os = "linux")]
 fn compatible_engine_running() -> bool {
     let Ok(info) = crate::audio::engine_ipc::engine_info() else {
         return false;
@@ -1611,6 +1657,20 @@ fn compatible_engine_running() -> bool {
     crate::audio::engine_ipc::engine_info_compatible(&info)
 }
 
+#[cfg(not(target_os = "linux"))]
+fn compatible_engine_running() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn initialize_player(
+    config: &Config,
+    _startup_mode: StartupMode,
+) -> Result<(crate::audio::AudioPlayer, bool), String> {
+    Ok((crate::audio::AudioPlayer::new_with_config(config), false))
+}
+
+#[cfg(target_os = "linux")]
 fn initialize_player(
     config: &Config,
     startup_mode: StartupMode,
@@ -1714,6 +1774,7 @@ fn connect_or_start_audio_engine<T>(
     None
 }
 
+#[cfg(target_os = "linux")]
 fn stop_audio_engine_service_and_process() {
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "stop", ENGINE_TARGET_UNIT])
@@ -1723,6 +1784,7 @@ fn stop_audio_engine_service_and_process() {
     crate::audio::engine_ipc::shutdown_engine_if_running();
 }
 
+#[cfg(target_os = "linux")]
 fn manage_audio_engine_service(action: ServiceAction) -> bool {
     ensure_user_audio_engine_units();
     let reload = std::process::Command::new("systemctl")

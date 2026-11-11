@@ -37,9 +37,7 @@ fn check_pipewire_with_runner(runner: &impl CommandRunner) -> PipeWireStatus {
         }
     }
 
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", nix::unistd::Uid::current()));
-    let socket_path = format!("{}/pipewire-0", runtime_dir);
+    let socket_path = format!("{}/pipewire-0", pipewire_runtime_dir());
     if std::path::Path::new(&socket_path).exists() {
         info!("PipeWire socket detected at {}", socket_path);
         return PipeWireStatus {
@@ -54,6 +52,18 @@ fn check_pipewire_with_runner(runner: &impl CommandRunner) -> PipeWireStatus {
         available: false,
         version: None,
         error: Some("PipeWire is not running. Please install and start PipeWire.".to_string()),
+    }
+}
+
+fn pipewire_runtime_dir() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var("XDG_RUNTIME_DIR")
+            .unwrap_or_else(|_| format!("/run/user/{}", nix::unistd::Uid::current()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        String::new()
     }
 }
 
