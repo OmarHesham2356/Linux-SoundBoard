@@ -32,6 +32,8 @@ pub struct SwhkdInstallError {
     pub state: SwhkdInstallState,
 }
 
+impl std::error::Error for SwhkdInstallError {}
+
 impl std::fmt::Display for SwhkdInstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.details.is_empty() {

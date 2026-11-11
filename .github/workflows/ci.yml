@@ -273,6 +273,7 @@ jobs:
             mingw-w64-x86_64-gtk4
             mingw-w64-x86_64-libadwaita
             mingw-w64-x86_64-adwaita-icon-theme
+            mingw-w64-x86_64-opus
             zip
 
       - name: Read Rust toolchain

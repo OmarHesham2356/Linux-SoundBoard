@@ -946,8 +946,10 @@ mod tests {
 
     #[test]
     fn playback_policy_loops_for_play_mode_or_loop_option() {
-        let mut settings = Settings::default();
-        settings.play_mode = PlayMode::Loop;
+        let mut settings = Settings {
+            play_mode: PlayMode::Loop,
+            ..Settings::default()
+        };
         assert!(settings.playback_policy().looping);
 
         settings.play_mode = PlayMode::Default;
