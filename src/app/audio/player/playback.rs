@@ -16,6 +16,7 @@ pub(super) struct ActivePlayback {
     pub(super) fallback_samples_written: u64,
     pub(super) paused: bool,
     pub(super) finished: bool,
+    pub(super) looping: bool,
     pub(super) source_exhausted: bool,
     pub(super) local_limiter: Option<LookAheadLimiter>,
     pub(super) virtual_limiter: Option<LookAheadLimiter>,
@@ -78,6 +79,7 @@ impl ActivePlayback {
             fallback_samples_written: 0,
             paused: false,
             finished: false,
+            looping: config.looping,
             source_exhausted: false,
             local_limiter,
             virtual_limiter,
@@ -170,7 +172,7 @@ impl ActivePlayback {
 
         while index < wanted_samples {
             if self.source_exhausted {
-                if config.looping && self.seek(0, config).is_ok() {
+                if self.looping && self.seek(0, config).is_ok() {
                     continue;
                 }
                 self.finished = true;

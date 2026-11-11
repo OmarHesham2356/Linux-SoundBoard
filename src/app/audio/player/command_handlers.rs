@@ -18,6 +18,7 @@ pub(super) fn audio_command_kind(cmd: &AudioCommand) -> &'static str {
         AudioCommand::SetLoudnessBoostEnabled { .. } => "SetLoudnessBoostEnabled",
         AudioCommand::SetLoudnessBoostDb { .. } => "SetLoudnessBoostDb",
         AudioCommand::SetLooping { .. } => "SetLooping",
+        AudioCommand::SetMuteVoice { .. } => "SetMuteVoice",
         AudioCommand::SetMicPassthrough { .. } => "SetMicPassthrough",
         AudioCommand::SetMicSource { .. } => "SetMicSource",
         AudioCommand::SetDefaultSourceMode { .. } => "SetDefaultSourceMode",
@@ -39,6 +40,9 @@ pub(super) fn handle_audio_command(
             base_volume,
             sound_lufs,
             sound_true_peak_dbtp,
+            looping,
+            mute_others,
+            replace,
             response,
         } => {
             let play_started_at = Instant::now();
@@ -47,7 +51,11 @@ pub(super) fn handle_audio_command(
                     "PipeWire backend unavailable".to_string(),
                 )));
             } else {
-                state.finished_playbacks.clear();
+                if replace {
+                    state.active_playbacks.clear();
+                    state.solo_play_id = None;
+                    state.finished_playbacks.clear();
+                }
                 let play_id = uuid::Uuid::new_v4().to_string();
                 let init_started_at = Instant::now();
                 match ActivePlayback::new(
@@ -60,7 +68,8 @@ pub(super) fn handle_audio_command(
                     sound_true_peak_dbtp,
                     &state.runtime,
                 ) {
-                    Ok(playback) => {
+                    Ok(mut playback) => {
+                        playback.looping = looping;
                         let init_elapsed_ms = init_started_at.elapsed().as_millis();
                         if init_elapsed_ms >= 100 {
                             debug!(
@@ -69,7 +78,10 @@ pub(super) fn handle_audio_command(
                             );
                         }
                         state.next_playback_order = state.next_playback_order.saturating_add(1);
-                        state.active_playback = Some(playback);
+                        if mute_others {
+                            state.solo_play_id = Some(play_id.clone());
+                        }
+                        state.active_playbacks.insert(play_id.clone(), playback);
                         let _ = response.send(Ok(play_id));
                     }
                     Err(err) => {
@@ -88,17 +100,25 @@ pub(super) fn handle_audio_command(
             }
         }
         AudioCommand::StopSound { sound_id } => {
-            if state
-                .active_playback
-                .as_ref()
-                .is_some_and(|playback| playback.sound_id == sound_id)
-            {
-                state.active_playback = None;
+            let removed = state
+                .active_playbacks
+                .iter()
+                .filter(|(_, playback)| playback.sound_id == sound_id)
+                .map(|(play_id, _)| play_id.clone())
+                .collect::<Vec<_>>();
+            for play_id in removed {
+                state.active_playbacks.remove(&play_id);
+                if state.solo_play_id.as_deref() == Some(play_id.as_str()) {
+                    state.solo_play_id = None;
+                }
+            }
+            if state.active_playbacks.is_empty() {
                 fade_output_queues(&state.queues);
             }
         }
         AudioCommand::StopAll => {
-            state.active_playback = None;
+            state.active_playbacks.clear();
+            state.solo_play_id = None;
             state.finished_playbacks.clear();
             fade_output_queues(&state.queues);
         }
@@ -107,31 +127,23 @@ pub(super) fn handle_audio_command(
             position_ms,
         } => {
             let runtime = state.runtime.clone();
-            if let Some(playback) = state
-                .active_playback
-                .as_mut()
-                .filter(|playback| playback.play_id == play_id)
-            {
+            if let Some(playback) = state.active_playbacks.get_mut(&play_id) {
                 let _ = playback.seek(position_ms, &runtime);
                 fade_output_queues(&state.queues);
             }
         }
         AudioCommand::Pause { sound_id } => {
-            if let Some(playback) = state
-                .active_playback
-                .as_mut()
-                .filter(|playback| playback.sound_id == sound_id)
-            {
-                playback.paused = true;
+            for playback in state.active_playbacks.values_mut() {
+                if playback.sound_id == sound_id {
+                    playback.paused = true;
+                }
             }
         }
         AudioCommand::Resume { sound_id } => {
-            if let Some(playback) = state
-                .active_playback
-                .as_mut()
-                .filter(|playback| playback.sound_id == sound_id)
-            {
-                playback.paused = false;
+            for playback in state.active_playbacks.values_mut() {
+                if playback.sound_id == sound_id {
+                    playback.paused = false;
+                }
             }
         }
         AudioCommand::SetLocalVolume { volume } => state.runtime.local_volume = volume,
@@ -139,7 +151,7 @@ pub(super) fn handle_audio_command(
         AudioCommand::SetAutoGainEnabled { enabled } => {
             state.runtime.auto_gain.enabled = enabled;
             let runtime = state.runtime.clone();
-            if let Some(playback) = state.active_playback.as_mut() {
+            for playback in state.active_playbacks.values_mut() {
                 playback.reset_limiters(&runtime);
             }
         }
@@ -149,14 +161,14 @@ pub(super) fn handle_audio_command(
         AudioCommand::SetAutoGainMode { mode } => {
             state.runtime.auto_gain.mode = AutoGainMode::from_u32(mode);
             let runtime = state.runtime.clone();
-            if let Some(playback) = state.active_playback.as_mut() {
+            for playback in state.active_playbacks.values_mut() {
                 playback.reset_limiters(&runtime);
             }
         }
         AudioCommand::SetAutoGainApplyTo { apply_to } => {
             state.runtime.auto_gain.apply_to = AutoGainApplyTo::from_u32(apply_to);
             let runtime = state.runtime.clone();
-            if let Some(playback) = state.active_playback.as_mut() {
+            for playback in state.active_playbacks.values_mut() {
                 playback.reset_limiters(&runtime);
             }
         }
@@ -171,7 +183,7 @@ pub(super) fn handle_audio_command(
                 release_ms,
             };
             let runtime = state.runtime.clone();
-            if let Some(playback) = state.active_playback.as_mut() {
+            for playback in state.active_playbacks.values_mut() {
                 playback.reset_limiters(&runtime);
             }
         }
@@ -181,7 +193,13 @@ pub(super) fn handle_audio_command(
         AudioCommand::SetLoudnessBoostDb { boost_db } => {
             state.runtime.loudness_boost_db = crate::config::normalize_loudness_boost_db(boost_db);
         }
-        AudioCommand::SetLooping { enabled } => state.runtime.looping = enabled,
+        AudioCommand::SetLooping { enabled } => {
+            state.runtime.looping = enabled;
+            for playback in state.active_playbacks.values_mut() {
+                playback.looping = enabled;
+            }
+        }
+        AudioCommand::SetMuteVoice { enabled } => state.runtime.mute_voice = enabled,
         AudioCommand::SetMicPassthrough { enabled, response } => {
             state.runtime.mic_passthrough = enabled;
             state.stream_runtime.apply_runtime(&state.runtime);
@@ -206,7 +224,8 @@ pub(super) fn handle_audio_command(
             let _ = response.send(result);
         }
         AudioCommand::Shutdown { policy, response } => {
-            state.active_playback = None;
+            state.active_playbacks.clear();
+            state.solo_play_id = None;
             clear_all_queues(&state.queues);
             drop_feeder_links(&mut state);
             if let Some(backend) = state.backend.as_mut() {

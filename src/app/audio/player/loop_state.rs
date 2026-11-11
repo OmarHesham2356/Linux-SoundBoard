@@ -30,7 +30,10 @@ pub(super) struct LoopState {
     pub(super) claimed_default: bool,
     pub(super) default_source_command_in_flight: std::sync::Arc<AtomicBool>,
 
-    pub(super) active_playback: Option<ActivePlayback>,
+    /// Active playbacks keyed by play id. Overlap mode keeps several entries.
+    pub(super) active_playbacks: HashMap<String, ActivePlayback>,
+    /// When set, only this playback is audible (Mute Other Sounds).
+    pub(super) solo_play_id: Option<String>,
     pub(super) finished_playbacks: HashMap<String, PlaybackSnapshot>,
     pub(super) next_playback_order: u64,
 
@@ -39,6 +42,8 @@ pub(super) struct LoopState {
     pub(super) ultra_starvation_ticks: u32,
     pub(super) local_mix_buffer: Vec<f32>,
     pub(super) virtual_mix_buffer: Vec<f32>,
+    pub(super) local_playback_buffer: Vec<f32>,
+    pub(super) virtual_playback_buffer: Vec<f32>,
     pub(super) mic_scratch_buffer: Vec<f32>,
 
     pub(super) snapshot: std::sync::Arc<RwLock<PlayerSnapshot>>,
@@ -75,7 +80,8 @@ impl LoopState {
             previous_default_source_name: None,
             claimed_default: false,
             default_source_command_in_flight: std::sync::Arc::new(AtomicBool::new(false)),
-            active_playback: None,
+            active_playbacks: HashMap::new(),
+            solo_play_id: None,
             finished_playbacks: HashMap::new(),
             next_playback_order: 0,
             queues: RtSharedQueues::new(ProcessQueues::new(
@@ -90,13 +96,15 @@ impl LoopState {
             last_had_active: false,
             local_mix_buffer: Vec::new(),
             virtual_mix_buffer: Vec::new(),
+            local_playback_buffer: Vec::new(),
+            virtual_playback_buffer: Vec::new(),
             mic_scratch_buffer: Vec::new(),
         }
     }
 
     pub(super) fn snapshot_positions(&self) -> Vec<PlaybackPosition> {
         let mut registry = self.finished_playbacks.clone();
-        if let Some(active) = &self.active_playback {
+        for active in self.active_playbacks.values() {
             registry.insert(
                 active.play_id.clone(),
                 PlaybackSnapshot {
@@ -132,11 +140,20 @@ impl LoopState {
     }
 
     pub(super) fn playing_ids(&self) -> Vec<String> {
-        self.active_playback
-            .as_ref()
+        self.active_playbacks
+            .values()
             .filter(|playback| !playback.finished)
-            .map(|playback| vec![playback.sound_id.clone()])
-            .unwrap_or_default()
+            .map(|playback| playback.sound_id.clone())
+            .collect()
+    }
+
+    /// The solo target only counts while that playback is still audible.
+    pub(super) fn audible_solo_play_id(&self) -> Option<&str> {
+        self.solo_play_id.as_deref().filter(|play_id| {
+            self.active_playbacks
+                .get(*play_id)
+                .is_some_and(|playback| !playback.finished && !playback.paused)
+        })
     }
 
     pub(super) fn trim_finished_playbacks(&mut self, max_entries: usize) {

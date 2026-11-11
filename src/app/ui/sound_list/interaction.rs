@@ -95,6 +95,12 @@ impl SoundListInner {
             let Some(inner) = inner_weak.upgrade() else {
                 return;
             };
+            if inner.state.config.lock().settings.trigger_mode
+                == crate::config::TriggerMode::PushToLoop
+            {
+                // Holding the row is handled by the press/release gesture.
+                return;
+            }
             let Some(obj) = store
                 .item(pos)
                 .and_then(|obj| obj.downcast::<BoxedAnyObject>().ok())
@@ -360,6 +366,74 @@ impl SoundListInner {
                 return;
             }
             inner.show_context_menu_for_sound_id(&widget, x, y, &sound_id);
+        });
+
+        widget.as_ref().add_controller(gesture);
+    }
+
+    /// Hold-to-loop for sound rows while Push to Loop is selected.
+    pub(super) fn install_push_to_loop_gesture(self: &Rc<Self>, widget: &impl IsA<gtk4::Widget>) {
+        let gesture = GestureClick::new();
+        gesture.set_button(gtk4::gdk::BUTTON_PRIMARY);
+        gesture.set_propagation_phase(gtk4::PropagationPhase::Capture);
+
+        // Captured at press time so a recycled row cannot stop another sound.
+        let held_sound_id: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+        let inner_weak = Rc::downgrade(self);
+        let held_for_press = Rc::clone(&held_sound_id);
+        gesture.connect_pressed(move |gesture, _, _, _| {
+            let Some(inner) = inner_weak.upgrade() else {
+                return;
+            };
+            if inner.state.config.lock().settings.trigger_mode
+                != crate::config::TriggerMode::PushToLoop
+            {
+                return;
+            }
+            let Some(widget) = gesture.widget() else {
+                return;
+            };
+            let sound_id = widget.widget_name().to_string();
+            if sound_id.is_empty() {
+                return;
+            }
+
+            *held_for_press.borrow_mut() = Some(sound_id.clone());
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            crate::ui_event_bridge::mark_explicit_play_pending();
+            let on_complete = move |result: Result<String, commands::CommandError>| {
+                if let Err(error) = result {
+                    crate::ui_event_bridge::clear_explicit_play_pending();
+                    log::warn!("Push-to-loop play failed: {error}");
+                }
+            };
+            if let Err(error) =
+                commands::play_sound_async(sound_id, Arc::clone(&inner.state), on_complete)
+            {
+                crate::ui_event_bridge::clear_explicit_play_pending();
+                log::warn!("Failed to dispatch push-to-loop play: {error}");
+            }
+        });
+
+        let inner_weak = Rc::downgrade(self);
+        let held_for_stop = Rc::clone(&held_sound_id);
+        // `stopped` also fires when the pointer leaves the row, so the loop
+        // cannot get stuck when the release happens elsewhere.
+        gesture.connect_stopped(move |_| {
+            let Some(sound_id) = held_for_stop.borrow_mut().take() else {
+                return;
+            };
+            let Some(inner) = inner_weak.upgrade() else {
+                return;
+            };
+
+            let player: Arc<dyn crate::audio::PlaybackEngine> = inner.state.player.clone();
+            let _ = commands::dispatch_async_result(
+                "push_loop_stop",
+                move || commands::stop_sound(sound_id, player),
+                |_| {},
+            );
         });
 
         widget.as_ref().add_controller(gesture);

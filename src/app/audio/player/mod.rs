@@ -549,6 +549,22 @@ impl AudioPlayer {
         }
     }
 
+    pub fn set_mute_voice(&self, enabled: bool) {
+        match &self.backend {
+            AudioPlayerBackend::Local(local) => {
+                let _ = local
+                    .command_tx
+                    .send(AudioCommand::SetMuteVoice { enabled });
+            }
+            AudioPlayerBackend::Remote(_) => {
+                let _ =
+                    remote_ok(crate::audio::engine_ipc::EngineRequest::SetMuteVoice { enabled });
+            }
+            #[cfg(test)]
+            AudioPlayerBackend::Noop(_) => {}
+        }
+    }
+
     pub fn set_mic_passthrough(&self, enabled: bool) -> Result<(), EngineError> {
         let local = match &self.backend {
             AudioPlayerBackend::Local(local) => local,
@@ -684,6 +700,31 @@ impl AudioPlayer {
         sound_lufs: Option<f64>,
         sound_true_peak_dbtp: Option<f32>,
     ) -> Result<String, EngineError> {
+        self.play_with_options(
+            sound_id,
+            path,
+            base_volume,
+            sound_lufs,
+            sound_true_peak_dbtp,
+            false,
+            false,
+            false,
+        )
+    }
+
+    /// Plays a sound with the trigger options that the reproduction settings need.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_with_options(
+        &self,
+        sound_id: &str,
+        path: &str,
+        base_volume: f32,
+        sound_lufs: Option<f64>,
+        sound_true_peak_dbtp: Option<f32>,
+        looping: bool,
+        mute_others: bool,
+        replace: bool,
+    ) -> Result<String, EngineError> {
         #[cfg(test)]
         if matches!(self.backend, AudioPlayerBackend::Noop(_)) {
             return Ok(format!("noop-play-{sound_id}"));
@@ -697,6 +738,9 @@ impl AudioPlayer {
                     base_volume,
                     sound_lufs,
                     sound_true_peak_dbtp,
+                    looping,
+                    mute_others,
+                    replace,
                 },
                 "Play",
             );
@@ -720,6 +764,9 @@ impl AudioPlayer {
                 base_volume,
                 sound_lufs,
                 sound_true_peak_dbtp,
+                looping,
+                mute_others,
+                replace,
                 response: response_tx,
             })
             .map_err(|_| EngineError::Setup("Audio backend thread is not running".to_string()))?;
@@ -799,18 +846,21 @@ impl AudioPlayer {
                     base_volume,
                     sound_lufs,
                     sound_true_peak_dbtp,
+                    looping: false,
+                    mute_others: false,
                 },
                 "PlayReplace",
             );
         }
-        // In-process stop-and-play avoids an IPC race.
-        self.stop_all();
-        self.play(
+        self.play_with_options(
             sound_id,
             path,
             base_volume,
             sound_lufs,
             sound_true_peak_dbtp,
+            false,
+            false,
+            true,
         )
     }
 
@@ -1083,6 +1133,7 @@ fn test_runtime_config_with_mode(mode: DefaultSourceMode) -> RuntimeConfig {
         loudness_boost_enabled: false,
         loudness_boost_db: 0.0,
         looping: false,
+        mute_voice: false,
         audio_backend: AudioBackendKind::PipeWire,
     }
 }

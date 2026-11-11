@@ -12,6 +12,7 @@ pub(super) struct RuntimeConfig {
     pub(super) loudness_boost_enabled: bool,
     pub(super) loudness_boost_db: f64,
     pub(super) looping: bool,
+    pub(super) mute_voice: bool,
     pub(super) audio_backend: AudioBackendKind,
 }
 
@@ -36,7 +37,8 @@ impl RuntimeConfig {
             loudness_boost_db: crate::config::normalize_loudness_boost_db(
                 config.settings.loudness_boost_db,
             ),
-            looping: playback.play_mode.should_loop(),
+            looping: playback.play_mode.should_loop() || config.settings.reproduction.loop_sound,
+            mute_voice: config.settings.reproduction.mute_voice,
             audio_backend: AudioBackendKind::PipeWire,
         }
     }

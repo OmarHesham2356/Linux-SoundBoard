@@ -730,7 +730,9 @@ fn fill_output_queues_prefills_target_buffer_for_active_playback() {
     .expect("create active playback");
 
     let mut state = LoopState::new(runtime, test_player_snapshot_store());
-    state.active_playback = Some(playback);
+    state
+        .active_playbacks
+        .insert(playback.play_id.clone(), playback);
 
     fill_output_queues(&mut state);
 
@@ -1301,7 +1303,9 @@ fn fill_output_queues_respects_per_tick_batch_budget() {
     .expect("create active playback");
 
     let mut state = LoopState::new(runtime, test_player_snapshot_store());
-    state.active_playback = Some(playback);
+    state
+        .active_playbacks
+        .insert(playback.play_id.clone(), playback);
 
     fill_output_queues(&mut state);
 
@@ -1453,19 +1457,20 @@ fn publish_snapshot_includes_visible_sources_and_active_playback() {
             is_hardware_backed: true,
         },
     );
-    state.active_playback = Some(
-        ActivePlayback::new(
-            "play-1".to_string(),
-            "sound-1".to_string(),
-            audio_path.to_string_lossy().to_string(),
-            0,
-            1.0,
-            None,
-            None,
-            &runtime,
-        )
-        .expect("create active playback"),
-    );
+    let playback = ActivePlayback::new(
+        "play-1".to_string(),
+        "sound-1".to_string(),
+        audio_path.to_string_lossy().to_string(),
+        0,
+        1.0,
+        None,
+        None,
+        &runtime,
+    )
+    .expect("create active playback");
+    state
+        .active_playbacks
+        .insert(playback.play_id.clone(), playback);
     state.publish_snapshot();
 
     let snapshot = snapshot.read().clone();

@@ -47,6 +47,7 @@ impl SoundListInner {
                 }
                 cell.append(&new_label());
                 inner.install_context_menu(&cell);
+                inner.install_push_to_loop_gesture(&cell);
                 inner.install_drag_source(&cell);
                 let Some(list_item) = item.downcast_ref::<gtk4::ListItem>() else {
                     return;
@@ -142,6 +143,7 @@ impl SoundListInner {
                 hbox.append(&label);
                 hbox.append(&warn);
                 inner.install_context_menu(&hbox);
+                inner.install_push_to_loop_gesture(&hbox);
                 inner.install_drag_source(&hbox);
 
                 let Some(list_item) = item.downcast_ref::<gtk4::ListItem>() else {

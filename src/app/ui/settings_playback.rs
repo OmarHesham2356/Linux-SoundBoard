@@ -80,6 +80,99 @@ fn apply_loudness_status_summary(
     }
 }
 
+pub(super) fn build_reproduction_group(state: Arc<AppState>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("Reproduction Options")
+        .description("How triggered sounds behave alongside other playback")
+        .build();
+
+    let (trigger_mode, options) = {
+        let cfg = state.config.lock();
+        (cfg.settings.trigger_mode, cfg.settings.reproduction)
+    };
+
+    let mode_row = adw::ComboRow::builder()
+        .title("Play Mode")
+        .subtitle("Overlap mixes sounds; Stop cuts the previous one; Push to Loop plays while held")
+        .build();
+    let mode_model = gtk4::StringList::new(&[
+        crate::config::TriggerMode::Overlap.label(),
+        crate::config::TriggerMode::Stop.label(),
+        crate::config::TriggerMode::PushToLoop.label(),
+    ]);
+    mode_row.set_model(Some(&mode_model));
+    mode_row.set_selected(match trigger_mode {
+        crate::config::TriggerMode::Overlap => 0,
+        crate::config::TriggerMode::Stop => 1,
+        crate::config::TriggerMode::PushToLoop => 2,
+    });
+    {
+        let state = Arc::clone(&state);
+        mode_row.connect_selected_notify(move |row| {
+            let mode = match row.selected() {
+                0 => crate::config::TriggerMode::Overlap,
+                2 => crate::config::TriggerMode::PushToLoop,
+                _ => crate::config::TriggerMode::Stop,
+            };
+            if let Err(error) =
+                commands::set_trigger_mode(mode.as_str().to_string(), Arc::clone(&state.config))
+            {
+                log::warn!("Could not save the play mode: {error}");
+            }
+        });
+    }
+    group.add(&mode_row);
+
+    let toggles = [
+        (
+            "stop_other_sounds",
+            "Stop Other Sounds",
+            "Cut off every other running sound when this one starts",
+            options.stop_other_sounds,
+        ),
+        (
+            "mute_other_sounds",
+            "Mute Other Sounds",
+            "Silence other running sounds while this one plays, then restore them",
+            options.mute_other_sounds,
+        ),
+        (
+            "mute_voice",
+            "Mute Voice",
+            "Remove the centred vocal layer from playback",
+            options.mute_voice,
+        ),
+        (
+            "loop_sound",
+            "Loop",
+            "Repeat the sound until it is explicitly stopped",
+            options.loop_sound,
+        ),
+    ];
+
+    for (id, title, subtitle, active) in toggles {
+        let row = adw::SwitchRow::builder()
+            .title(title)
+            .subtitle(subtitle)
+            .active(active)
+            .build();
+        let state = Arc::clone(&state);
+        row.connect_active_notify(move |row| {
+            if let Err(error) = commands::set_reproduction_option(
+                id.to_string(),
+                row.is_active(),
+                Arc::clone(&state.config),
+                Arc::clone(&state.player),
+            ) {
+                log::warn!("Could not save the {id} reproduction option: {error}");
+            }
+        });
+        group.add(&row);
+    }
+
+    group
+}
+
 pub(super) fn build_playback_groups(
     state: Arc<AppState>,
     visibility_weak: gtk4::glib::WeakRef<gtk4::Widget>,

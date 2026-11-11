@@ -453,6 +453,10 @@ pub fn handle_hotkey(
         log::debug!("Ignoring hotkey '{id}' while a shortcut is being recorded");
         return;
     }
+    if let Some(binding_id) = id.strip_prefix(crate::hotkeys::HOTKEY_RELEASE_PREFIX) {
+        handle_hotkey_release(state, binding_id);
+        return;
+    }
     if let Some(action) = crate::config::ControlHotkeyAction::from_binding_id(id) {
         handle_control_hotkey(state, transport, action);
     } else if let Some(scope_key) = commands::tab_from_binding_id(id) {
@@ -475,6 +479,21 @@ pub fn handle_hotkey(
             crate::ui_event_bridge::clear_explicit_play_pending();
             log::warn!("Failed to dispatch hotkey playback '{}': {}", id, e);
         }
+    }
+}
+
+fn handle_hotkey_release(state: &Arc<AppState>, binding_id: &str) {
+    if crate::config::ControlHotkeyAction::from_binding_id(binding_id).is_some()
+        || commands::tab_from_binding_id(binding_id).is_some()
+    {
+        return;
+    }
+    let push_to_loop =
+        state.config.lock().settings.trigger_mode == crate::config::TriggerMode::PushToLoop;
+    if push_to_loop {
+        // Push-to-loop is exclusive: pressing stopped everything else.
+        let player: Arc<dyn crate::audio::PlaybackEngine> = state.player.clone();
+        commands::stop_all(player);
     }
 }
 

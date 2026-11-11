@@ -9,6 +9,10 @@ pub(super) enum AudioCommand {
         base_volume: f32,
         sound_lufs: Option<f64>,
         sound_true_peak_dbtp: Option<f32>,
+        looping: bool,
+        mute_others: bool,
+        /// Stop every other playback before starting this one.
+        replace: bool,
         response: Sender<Result<String, EngineError>>,
     },
     StopSound {
@@ -55,6 +59,9 @@ pub(super) enum AudioCommand {
         boost_db: f64,
     },
     SetLooping {
+        enabled: bool,
+    },
+    SetMuteVoice {
         enabled: bool,
     },
     SetMicPassthrough {

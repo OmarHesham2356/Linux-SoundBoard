@@ -7,11 +7,13 @@ use std::time::Instant;
 use crate::app_state::AppState;
 use crate::audio::PlaybackEngine;
 use crate::audio::{loudness as audio_loudness, AudioPlayer, PlaybackPosition};
-use crate::config::{Config, LoudnessAnalysisState, Sound};
+use crate::config::{
+    Config, LoudnessAnalysisState, PlaybackPolicy, ReproductionOptions, Sound, TriggerMode,
+};
 
 use super::shared::{
     dispatch_async_result, parse_auto_gain_apply_to, parse_auto_gain_mode, validate_play_mode,
-    with_saved_config,
+    validate_trigger_mode, with_saved_config,
 };
 use super::CommandError;
 
@@ -189,6 +191,7 @@ pub fn trigger_missing_loudness_analysis_with_store(
 fn play_resolved_sound(
     sound: Sound,
     player: Arc<dyn PlaybackEngine>,
+    policy: PlaybackPolicy,
 ) -> Result<String, CommandError> {
     if !sound.enabled {
         return Err(CommandError::SoundDisabled);
@@ -199,19 +202,40 @@ fn play_resolved_sound(
         return Err(CommandError::SourceUnavailable(source_path.to_string()));
     }
 
-    player.stop_all();
+    let already_playing = player.get_playing().iter().any(|id| id == &sound.id);
+    match policy.trigger_mode {
+        TriggerMode::Stop => {
+            if already_playing {
+                player
+                    .stop_sound(&sound.id)
+                    .map_err(|e| CommandError::Engine(e.to_string()))?;
+                return Ok(String::new());
+            }
+            player.stop_all();
+        }
+        TriggerMode::PushToLoop => player.stop_all(),
+        TriggerMode::Overlap => {
+            if policy.stop_other_sounds && !already_playing {
+                player.stop_all();
+            }
+        }
+    }
 
+    let looping = policy.looping || policy.trigger_mode == TriggerMode::PushToLoop;
     let base_volume = sound.volume as f32 / 100.0;
     let sound_lufs = sound.loudness_lufs;
     let sound_true_peak_dbtp = sound.loudness_true_peak_dbtp;
     let id = sound.id;
     let result = player
-        .play(
+        .play_with_options(
             &id,
             source_path,
             base_volume,
             sound_lufs,
             sound_true_peak_dbtp,
+            looping,
+            policy.mute_other_sounds,
+            false,
         )
         .map_err(|e| CommandError::Engine(e.to_string()));
     if let Err(err) = &result {
@@ -247,6 +271,7 @@ fn play_sound_from_library(
     lookup: &SoundLookup,
     library: &crate::library_store::LibraryStore,
     player: Arc<dyn PlaybackEngine>,
+    policy: PlaybackPolicy,
 ) -> Result<String, CommandError> {
     let sound = match lookup {
         SoundLookup::ById => library
@@ -256,7 +281,7 @@ fn play_sound_from_library(
             .ok_or(CommandError::SoundNotFound)?,
         SoundLookup::HotkeyBinding(press) => resolve_hotkey_press(id, press, library)?,
     };
-    play_resolved_sound(sound, player)
+    play_resolved_sound(sound, player, policy)
 }
 
 fn resolve_hotkey_press(
@@ -305,6 +330,7 @@ fn play_adjacent_from_library(
     offset: i32,
     library: &crate::library_store::LibraryStore,
     player: Arc<dyn PlaybackEngine>,
+    policy: PlaybackPolicy,
 ) -> Result<String, CommandError> {
     let total = library
         .count(scope.clone(), search)
@@ -327,7 +353,7 @@ fn play_adjacent_from_library(
             .recv()
             .map_err(|error| CommandError::Library(error.to_string()))?;
     }
-    play_resolved_sound(sound.ok_or(CommandError::SoundNotFound)?, player)
+    play_resolved_sound(sound.ok_or(CommandError::SoundNotFound)?, player, policy)
 }
 
 fn play_adjacent_from_sound_id_from_library(
@@ -337,6 +363,7 @@ fn play_adjacent_from_sound_id_from_library(
     offset: i32,
     library: &crate::library_store::LibraryStore,
     player: Arc<dyn PlaybackEngine>,
+    policy: PlaybackPolicy,
 ) -> Result<String, CommandError> {
     let position = library
         .position_for_sound(scope.clone(), search, sound_id)
@@ -344,7 +371,15 @@ fn play_adjacent_from_sound_id_from_library(
         .map_err(|error| CommandError::Library(error.to_string()))?
         .ok_or(CommandError::SoundNotFound)?;
 
-    play_adjacent_from_library(scope, search, Some(position), offset, library, player)
+    play_adjacent_from_library(
+        scope,
+        search,
+        Some(position),
+        offset,
+        library,
+        player,
+        policy,
+    )
 }
 
 pub fn play_sound_async<F>(
@@ -388,9 +423,12 @@ where
 {
     let library = state.library.clone();
     let player = Arc::clone(&state.player);
+    let policy = state.config.lock().settings.playback_policy();
     dispatch_async_result(
         "play_adjacent_sound",
-        move || play_adjacent_from_library(scope, &search, position, offset, &library, player),
+        move || {
+            play_adjacent_from_library(scope, &search, position, offset, &library, player, policy)
+        },
         on_complete,
     )
 }
@@ -408,11 +446,12 @@ where
 {
     let library = state.library.clone();
     let player = Arc::clone(&state.player);
+    let policy = state.config.lock().settings.playback_policy();
     dispatch_async_result(
         "play_adjacent_sound_from_id",
         move || {
             play_adjacent_from_sound_id_from_library(
-                scope, &search, &sound_id, offset, &library, player,
+                scope, &search, &sound_id, offset, &library, player, policy,
             )
         },
         on_complete,
@@ -449,11 +488,12 @@ where
     }
     let library = state.library.clone();
     let player = Arc::clone(&state.player);
+    let policy = state.config.lock().settings.playback_policy();
     let first_recorded = Arc::clone(&state.first_playback_recorded);
     let state_diag = Arc::clone(&state);
     dispatch_async_result(
         "play_sound",
-        move || play_sound_from_library(&id, &lookup, &library, player),
+        move || play_sound_from_library(&id, &lookup, &library, player, policy),
         move |result: Result<String, CommandError>| {
             if result.is_ok()
                 && first_recorded
@@ -641,15 +681,60 @@ pub fn set_play_mode(
     player: Arc<AudioPlayer>,
 ) -> Result<(), CommandError> {
     let mode = validate_play_mode(&mode)?;
-    let should_loop = mode.should_loop();
-    save_config_and_notify_player(
-        &config,
-        &player,
-        |cfg| {
-            cfg.settings.play_mode = mode;
-        },
-        |player| player.set_looping(should_loop),
-    )
+    with_saved_config(&config, |cfg| {
+        cfg.settings.play_mode = mode;
+    })?;
+    let should_loop = config.lock().settings.playback_policy().looping;
+    player.set_looping(should_loop);
+    Ok(())
+}
+
+pub fn set_trigger_mode(mode: String, config: Arc<Mutex<Config>>) -> Result<(), CommandError> {
+    let mode = validate_trigger_mode(&mode)?;
+    with_saved_config(&config, |cfg| {
+        cfg.settings.trigger_mode = mode;
+    })
+}
+
+/// Toggles one of the Reproduction Options checkboxes.
+pub fn set_reproduction_option(
+    option: String,
+    enabled: bool,
+    config: Arc<Mutex<Config>>,
+    player: Arc<AudioPlayer>,
+) -> Result<(), CommandError> {
+    let normalized = option.trim().to_ascii_lowercase();
+    if !matches!(
+        normalized.as_str(),
+        "stop_other_sounds" | "mute_other_sounds" | "mute_voice" | "loop_sound"
+    ) {
+        return Err(CommandError::Invalid(format!(
+            "Unknown reproduction option '{}'. Use stop_other_sounds, mute_other_sounds, mute_voice, or loop_sound.",
+            option
+        )));
+    }
+
+    with_saved_config(&config, |cfg| {
+        let options: &mut ReproductionOptions = &mut cfg.settings.reproduction;
+        match normalized.as_str() {
+            "stop_other_sounds" => options.stop_other_sounds = enabled,
+            "mute_other_sounds" => options.mute_other_sounds = enabled,
+            "mute_voice" => options.mute_voice = enabled,
+            "loop_sound" => options.loop_sound = enabled,
+            _ => {}
+        }
+    })?;
+
+    match normalized.as_str() {
+        "mute_voice" => player.set_mute_voice(enabled),
+        "loop_sound" => {
+            let should_loop = config.lock().settings.playback_policy().looping;
+            player.set_looping(should_loop);
+        }
+        "stop_other_sounds" | "mute_other_sounds" => {}
+        _ => {}
+    }
+    Ok(())
 }
 
 pub fn analyze_sound_loudness_with_store_async<F>(

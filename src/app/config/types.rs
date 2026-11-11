@@ -177,6 +177,86 @@ impl FromStr for PlayMode {
 }
 impl_string_serde_enum!(PlayMode);
 
+/// How a sound is triggered relative to anything already playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TriggerMode {
+    /// Let the new sound play alongside whatever is already playing.
+    Overlap,
+    /// Stop the previous sound; pressing the same binding again stops it.
+    #[default]
+    Stop,
+    /// Play only while the binding or row is held down.
+    PushToLoop,
+}
+
+impl TriggerMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Overlap => "overlap",
+            Self::Stop => "stop",
+            Self::PushToLoop => "push_to_loop",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Overlap => "Play & Overlap",
+            Self::Stop => "Play & Stop",
+            Self::PushToLoop => "Push to Loop",
+        }
+    }
+}
+
+impl FromStr for TriggerMode {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "overlap" | "play_overlap" | "play_and_overlap" => Ok(Self::Overlap),
+            "stop" | "play_stop" | "play_and_stop" => Ok(Self::Stop),
+            "push_to_loop" | "push" | "hold" => Ok(Self::PushToLoop),
+            _ => Err(()),
+        }
+    }
+}
+impl_string_serde_enum!(TriggerMode);
+
+/// Per-trigger reproduction switches shown under Reproduction Options.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReproductionOptions {
+    /// Cut off every other running sound when a sound starts.
+    pub stop_other_sounds: bool,
+    /// Silence other running sounds while this one plays.
+    pub mute_other_sounds: bool,
+    /// Remove the centred vocal layer from playback.
+    pub mute_voice: bool,
+    /// Repeat the sound until it is explicitly stopped.
+    pub loop_sound: bool,
+}
+
+/// Snapshot of the playback settings that apply when a sound is triggered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaybackPolicy {
+    pub trigger_mode: TriggerMode,
+    pub stop_other_sounds: bool,
+    pub mute_other_sounds: bool,
+    pub mute_voice: bool,
+    pub looping: bool,
+}
+
+impl Default for PlaybackPolicy {
+    fn default() -> Self {
+        Self {
+            trigger_mode: TriggerMode::Stop,
+            stop_other_sounds: false,
+            mute_other_sounds: false,
+            mute_voice: false,
+            looping: false,
+        }
+    }
+}
+
 /// Picks a member for a shared hotkey.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GroupMode {
@@ -661,6 +741,10 @@ pub struct Settings {
     #[serde(default)]
     pub play_mode: PlayMode,
     #[serde(default)]
+    pub trigger_mode: TriggerMode,
+    #[serde(default)]
+    pub reproduction: ReproductionOptions,
+    #[serde(default)]
     pub tab_hotkeys: bool,
     #[serde(default)]
     pub multi_sound_hotkeys: bool,
@@ -760,6 +844,16 @@ impl Settings {
         }
     }
 
+    pub fn playback_policy(&self) -> PlaybackPolicy {
+        PlaybackPolicy {
+            trigger_mode: self.trigger_mode,
+            stop_other_sounds: self.reproduction.stop_other_sounds,
+            mute_other_sounds: self.reproduction.mute_other_sounds,
+            mute_voice: self.reproduction.mute_voice,
+            looping: self.play_mode.should_loop() || self.reproduction.loop_sound,
+        }
+    }
+
     pub fn normalize_for_persistence(&mut self) {
         if !self.auto_gain_target_lufs.is_finite() {
             self.auto_gain_target_lufs = default_auto_gain_target();
@@ -798,6 +892,8 @@ impl Default for Settings {
             multi_sound_hotkeys: false,
             group_mode: GroupMode::default(),
             play_mode: PlayMode::Default,
+            trigger_mode: TriggerMode::Stop,
+            reproduction: ReproductionOptions::default(),
             list_style: ListStyle::Compact,
             tray_enabled: default_tray_setting(),
             close_to_tray: default_tray_setting(),
@@ -831,10 +927,44 @@ pub struct Config {
 
 #[cfg(test)]
 mod tests {
-    use super::Settings;
+    use super::{PlayMode, Settings, TriggerMode};
 
     #[test]
     fn settings_default_disables_multiple_playbacks() {
         assert!(!Settings::default().allow_multiple_playbacks);
+    }
+
+    #[test]
+    fn playback_policy_defaults_to_stop_without_extra_options() {
+        let policy = Settings::default().playback_policy();
+        assert_eq!(policy.trigger_mode, TriggerMode::Stop);
+        assert!(!policy.stop_other_sounds);
+        assert!(!policy.mute_other_sounds);
+        assert!(!policy.mute_voice);
+        assert!(!policy.looping);
+    }
+
+    #[test]
+    fn playback_policy_loops_for_play_mode_or_loop_option() {
+        let mut settings = Settings::default();
+        settings.play_mode = PlayMode::Loop;
+        assert!(settings.playback_policy().looping);
+
+        settings.play_mode = PlayMode::Default;
+        assert!(!settings.playback_policy().looping);
+        settings.reproduction.loop_sound = true;
+        assert!(settings.playback_policy().looping);
+    }
+
+    #[test]
+    fn missing_reproduction_fields_fall_back_to_disabled() {
+        let mut value = serde_json::to_value(Settings::default()).expect("serialize settings");
+        let object = value.as_object_mut().expect("settings object");
+        object.remove("trigger_mode");
+        object.remove("reproduction");
+
+        let settings: Settings = serde_json::from_value(value).expect("deserialize settings");
+        assert_eq!(settings.trigger_mode, TriggerMode::Stop);
+        assert_eq!(settings.reproduction, Default::default());
     }
 }

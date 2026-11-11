@@ -22,7 +22,7 @@ pub enum EngineIpcError {
 const IPC_TIMEOUT: Duration = Duration::from_secs(3);
 const ENGINE_DIR_NAME: &str = "linux-soundboard";
 const ENGINE_SOCKET_NAME: &str = "engine.sock";
-pub const ENGINE_PROTOCOL_VERSION: u32 = 2;
+pub const ENGINE_PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -37,6 +37,13 @@ pub enum EngineRequest {
         sound_lufs: Option<f64>,
         #[serde(default)]
         sound_true_peak_dbtp: Option<f32>,
+        #[serde(default)]
+        looping: bool,
+        #[serde(default)]
+        mute_others: bool,
+        /// Replaces playback without publishing an empty snapshot.
+        #[serde(default)]
+        replace: bool,
     },
     /// Replaces playback without publishing an empty snapshot.
     PlayReplace {
@@ -46,6 +53,10 @@ pub enum EngineRequest {
         sound_lufs: Option<f64>,
         #[serde(default)]
         sound_true_peak_dbtp: Option<f32>,
+        #[serde(default)]
+        looping: bool,
+        #[serde(default)]
+        mute_others: bool,
     },
     StopSound {
         sound_id: String,
@@ -91,6 +102,9 @@ pub enum EngineRequest {
         boost_db: f64,
     },
     SetLooping {
+        enabled: bool,
+    },
+    SetMuteVoice {
         enabled: bool,
     },
     SetMicPassthrough {

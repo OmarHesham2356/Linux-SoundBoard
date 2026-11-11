@@ -44,6 +44,13 @@ pub(super) fn try_dispatch_hotkey(sender: &SyncSender<String>, binding_id: Strin
     }
 }
 
+pub(super) fn try_dispatch_hotkey_release(sender: &SyncSender<String>, binding_id: &str) -> bool {
+    try_dispatch_hotkey(
+        sender,
+        format!("{}{binding_id}", super::HOTKEY_RELEASE_PREFIX),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

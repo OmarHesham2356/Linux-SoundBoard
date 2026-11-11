@@ -168,12 +168,18 @@ fn handle_request(
             base_volume,
             sound_lufs,
             sound_true_peak_dbtp,
-        } => match player.play(
+            looping,
+            mute_others,
+            replace,
+        } => match player.play_with_options(
             &sound_id,
             &path,
             base_volume,
             sound_lufs,
             sound_true_peak_dbtp,
+            looping,
+            mute_others,
+            replace,
         ) {
             Ok(play_id) => EngineResponse::PlayId { play_id },
             Err(e) => EngineResponse::Error {
@@ -186,21 +192,23 @@ fn handle_request(
             base_volume,
             sound_lufs,
             sound_true_peak_dbtp,
-        } => {
-            player.stop_all();
-            match player.play(
-                &sound_id,
-                &path,
-                base_volume,
-                sound_lufs,
-                sound_true_peak_dbtp,
-            ) {
-                Ok(play_id) => EngineResponse::PlayId { play_id },
-                Err(e) => EngineResponse::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
+            looping,
+            mute_others,
+        } => match player.play_with_options(
+            &sound_id,
+            &path,
+            base_volume,
+            sound_lufs,
+            sound_true_peak_dbtp,
+            looping,
+            mute_others,
+            true,
+        ) {
+            Ok(play_id) => EngineResponse::PlayId { play_id },
+            Err(e) => EngineResponse::Error {
+                message: e.to_string(),
+            },
+        },
         EngineRequest::StopSound { sound_id } => result_to_response(player.stop_sound(&sound_id)),
         EngineRequest::StopAll => {
             player.stop_all();
@@ -263,6 +271,10 @@ fn handle_request(
         }
         EngineRequest::SetLooping { enabled } => {
             player.set_looping(enabled);
+            EngineResponse::Ok
+        }
+        EngineRequest::SetMuteVoice { enabled } => {
+            player.set_mute_voice(enabled);
             EngineResponse::Ok
         }
         EngineRequest::SetMicPassthrough { enabled } => {

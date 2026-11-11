@@ -381,8 +381,10 @@ fn build_audio_page(
         .title("Audio")
         .icon_name(icons::name(icons::LOCAL_AUDIO))
         .build();
+    let reproduction_group = super::settings_playback::build_reproduction_group(Arc::clone(&state));
     let (playback_group, auto_gain_group, loudness_boost_group) =
         super::settings_playback::build_playback_groups(state, visibility_weak);
+    page.add(&reproduction_group);
     page.add(&playback_group);
     page.add(&auto_gain_group);
     page.add(&loudness_boost_group);

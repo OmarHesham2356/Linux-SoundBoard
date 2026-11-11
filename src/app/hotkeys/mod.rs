@@ -10,6 +10,9 @@ mod swhkd_install;
 mod swhkd_process;
 mod x11_backend;
 
+/// Marks a hotkey release in the hotkey dispatch channel.
+pub const HOTKEY_RELEASE_PREFIX: &str = "release:";
+
 pub(super) const SWHKD_SOCKET_POLL_INTERVAL_MS: u64 = 100;
 pub(super) const SWHKD_RELOAD_PRE_SIGNAL_WAIT_MS: u64 = 100;
 pub(super) const SWHKD_RELOAD_POST_SIGNAL_WAIT_MS: u64 = 200;

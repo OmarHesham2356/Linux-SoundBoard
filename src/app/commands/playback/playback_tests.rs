@@ -178,6 +178,7 @@ mod dispatch {
             &super::super::SoundLookup::HotkeyBinding(press(false, crate::config::GroupMode::Same)),
             &store,
             fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
         )
         .expect("an ordinary binding is a group of one");
 
@@ -197,6 +198,7 @@ mod dispatch {
             &super::super::SoundLookup::HotkeyBinding(press(true, crate::config::GroupMode::Same)),
             &store,
             fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
         )
         .expect("a shared chord plays its first member");
 
@@ -220,6 +222,7 @@ mod dispatch {
                 &context,
                 &store,
                 fake.clone() as Arc<dyn PlaybackEngine>,
+                crate::config::PlaybackPolicy::default(),
             )
             .expect("play a member");
         }
@@ -269,6 +272,7 @@ mod dispatch {
             1,
             &store,
             fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
         )
         .expect("continue from second sound");
 
@@ -317,6 +321,7 @@ mod dispatch {
             1,
             &store,
             fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
         )
         .expect("wrap Continue playback");
 
@@ -341,6 +346,7 @@ mod dispatch {
             &super::super::SoundLookup::HotkeyBinding(press(false, crate::config::GroupMode::Same)),
             &store,
             fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
         )
         .expect_err("guessing between two sounds is worse than doing nothing");
 
@@ -355,9 +361,12 @@ mod dispatch {
         let sound_id = sound.id.clone();
         let fake = Arc::new(FakeAudioPlayer::new());
 
-        let play_id =
-            super::super::play_resolved_sound(sound, fake.clone() as Arc<dyn PlaybackEngine>)
-                .expect("an enabled sound that exists should play");
+        let play_id = super::super::play_resolved_sound(
+            sound,
+            fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
+        )
+        .expect("an enabled sound that exists should play");
 
         fake.assert_played(&sound_id);
         let calls = fake.play_calls();
@@ -401,6 +410,7 @@ mod dispatch {
             &super::super::SoundLookup::ById,
             &store,
             fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
         )
         .expect("play current library row");
 
@@ -415,8 +425,11 @@ mod dispatch {
         sound.enabled = false;
         let fake = Arc::new(FakeAudioPlayer::new());
 
-        let result =
-            super::super::play_resolved_sound(sound, fake.clone() as Arc<dyn PlaybackEngine>);
+        let result = super::super::play_resolved_sound(
+            sound,
+            fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
+        );
 
         assert!(matches!(result, Err(CommandError::SoundDisabled)));
         fake.assert_no_plays();
@@ -429,11 +442,58 @@ mod dispatch {
         sound.enabled = true;
         let fake = Arc::new(FakeAudioPlayer::new());
 
-        let result =
-            super::super::play_resolved_sound(sound, fake.clone() as Arc<dyn PlaybackEngine>);
+        let result = super::super::play_resolved_sound(
+            sound,
+            fake.clone() as Arc<dyn PlaybackEngine>,
+            crate::config::PlaybackPolicy::default(),
+        );
 
         assert!(matches!(result, Err(CommandError::SourceUnavailable(_))));
         fake.assert_no_plays();
+        assert_eq!(fake.stop_all_calls(), 0);
+    }
+
+    #[test]
+    fn stop_mode_stops_a_sound_that_is_already_playing() {
+        let (sound, _dir, _path) = sound_on_disk("Toggle");
+        let sound_id = sound.id.clone();
+        let fake = Arc::new(FakeAudioPlayer::new());
+        let policy = crate::config::PlaybackPolicy::default();
+
+        super::super::play_resolved_sound(
+            sound.clone(),
+            fake.clone() as Arc<dyn PlaybackEngine>,
+            policy,
+        )
+        .expect("first press plays");
+        super::super::play_resolved_sound(sound, fake.clone() as Arc<dyn PlaybackEngine>, policy)
+            .expect("second press stops");
+
+        let played: Vec<String> = fake
+            .play_calls()
+            .into_iter()
+            .map(|call| call.sound_id)
+            .collect();
+        assert_eq!(played, [sound_id]);
+        assert_eq!(fake.stop_all_calls(), 1, "the second press only stops");
+    }
+
+    #[test]
+    fn overlap_mode_keeps_the_previous_sound_playing() {
+        let (first, _first_dir, _first_path) = sound_on_disk("First");
+        let (second, _second_dir, _second_path) = sound_on_disk("Second");
+        let fake = Arc::new(FakeAudioPlayer::new());
+        let policy = crate::config::PlaybackPolicy {
+            trigger_mode: crate::config::TriggerMode::Overlap,
+            ..crate::config::PlaybackPolicy::default()
+        };
+
+        super::super::play_resolved_sound(first, fake.clone() as Arc<dyn PlaybackEngine>, policy)
+            .expect("first sound plays");
+        super::super::play_resolved_sound(second, fake.clone() as Arc<dyn PlaybackEngine>, policy)
+            .expect("second sound plays alongside");
+
+        assert_eq!(fake.play_calls().len(), 2);
         assert_eq!(fake.stop_all_calls(), 0);
     }
 }

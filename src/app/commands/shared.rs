@@ -97,6 +97,18 @@ pub fn parse_auto_gain_apply_to(s: &str) -> Result<crate::config::AutoGainApplyT
     }
 }
 
+pub fn validate_trigger_mode(s: &str) -> Result<crate::config::TriggerMode, CommandError> {
+    match s.to_lowercase().as_str() {
+        "overlap" | "play_overlap" | "play_and_overlap" => Ok(crate::config::TriggerMode::Overlap),
+        "stop" | "play_stop" | "play_and_stop" => Ok(crate::config::TriggerMode::Stop),
+        "push_to_loop" | "push" | "hold" => Ok(crate::config::TriggerMode::PushToLoop),
+        _ => Err(CommandError::Invalid(format!(
+            "Invalid trigger mode '{}'. Use 'overlap', 'stop', or 'push_to_loop'.",
+            s
+        ))),
+    }
+}
+
 pub fn validate_play_mode(s: &str) -> Result<PlayMode, CommandError> {
     match s.to_lowercase().as_str() {
         "default" => Ok(PlayMode::Default),

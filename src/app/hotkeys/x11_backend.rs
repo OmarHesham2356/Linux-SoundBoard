@@ -16,7 +16,7 @@ use x11::xlib;
 
 use crate::app_meta::{BACKEND_ENV_VAR, FORCE_X11_ENV_VAR, X11_BACKEND};
 
-use super::backend_runtime::{try_dispatch_hotkey, HotkeyBackend};
+use super::backend_runtime::{try_dispatch_hotkey, try_dispatch_hotkey_release, HotkeyBackend};
 use super::error::{hotkey_conflict, HotkeyError};
 use super::{normalize_capture_key, parse_hotkey_spec, HotkeyCode, HotkeyModifier, HotkeySpec};
 
@@ -341,6 +341,7 @@ impl HotkeyBackend for X11Backend {
             info!("X11 backend listener started");
 
             let mut active_mods = 0_u8;
+            let mut pressed_chords: HashMap<u32, Chord> = HashMap::new();
             let mut event: xlib::XEvent = std::mem::zeroed();
 
             let connection_fd = xlib::XConnectionNumber(display);
@@ -413,16 +414,29 @@ impl HotkeyBackend for X11Backend {
                                         key: code,
                                         modifiers: active_mods,
                                     };
-                                    let id = bindings.lock().id_for(chord).map(str::to_string);
-                                    if let Some(id) = id {
-                                        debug!("X11 hotkey triggered: {}", id);
-                                        if !try_dispatch_hotkey(&sender, id) {
-                                            debug!("Dropped X11 hotkey repeat because the queue is full");
+                                    // Auto-repeat sends repeated presses while held.
+                                    if pressed_chords.insert(keycode, chord).is_none() {
+                                        let id = bindings.lock().id_for(chord).map(str::to_string);
+                                        if let Some(id) = id {
+                                            debug!("X11 hotkey triggered: {}", id);
+                                            if !try_dispatch_hotkey(&sender, id) {
+                                                debug!("Dropped X11 hotkey repeat because the queue is full");
+                                            }
                                         }
                                     }
                                 }
                             }
-                            _ => {}
+                            _ => {
+                                if let Some(chord) = pressed_chords.remove(&keycode) {
+                                    let id = bindings.lock().id_for(chord).map(str::to_string);
+                                    if let Some(id) = id {
+                                        debug!("X11 hotkey released: {}", id);
+                                        if !try_dispatch_hotkey_release(&sender, &id) {
+                                            debug!("Dropped X11 hotkey release because the queue is full");
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
