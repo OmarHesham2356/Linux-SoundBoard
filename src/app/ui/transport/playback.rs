@@ -4,12 +4,36 @@ use std::sync::Arc;
 use gtk4::prelude::*;
 use gtk4::ToggleButton;
 
+use crate::app_state::AppState;
 use crate::commands;
 use crate::config::{PlayMode, TriggerMode};
 
 use super::helpers::should_clear_continue_suppression;
 use super::{ContinueCursor, TransportBar, TransportInner};
 use crate::ui::icons;
+
+#[cfg(test)]
+mod tests {
+    use super::CycleMode;
+    use crate::config::{PlayMode, TriggerMode};
+
+    #[test]
+    fn the_mode_button_walks_every_play_mode_then_play_and_hold() {
+        assert_eq!(CycleMode::Default.next(), CycleMode::Loop);
+        assert_eq!(CycleMode::Loop.next(), CycleMode::Continue);
+        assert_eq!(CycleMode::Continue.next(), CycleMode::PlayAndHold);
+        assert_eq!(CycleMode::PlayAndHold.next(), CycleMode::Default);
+
+        assert_eq!(
+            CycleMode::from_settings(PlayMode::Continue, TriggerMode::Stop),
+            CycleMode::Continue
+        );
+        assert_eq!(
+            CycleMode::from_settings(PlayMode::Default, TriggerMode::PlayAndHold),
+            CycleMode::PlayAndHold
+        );
+    }
+}
 
 fn set_active_if_changed(button: &ToggleButton, active: bool) {
     if button.is_active() != active {
@@ -64,56 +88,86 @@ pub(super) fn update_headphones_button(button: &ToggleButton, enabled: bool) {
     }
 }
 
-pub(super) fn play_mode_icon(mode: PlayMode) -> icons::IconPair {
-    match mode {
-        PlayMode::Loop => icons::PLAYMODE_LOOP,
-        PlayMode::Continue => icons::PLAYMODE_CONTINUE,
-        PlayMode::Default => icons::PLAYMODE_DEFAULT,
+/// The transport's single mode button walks these in order. The first three are
+/// the per-track play modes; the last turns a binding into a press-and-release
+/// hold, which is why it also writes the trigger setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CycleMode {
+    Default,
+    Loop,
+    Continue,
+    PlayAndHold,
+}
+
+impl CycleMode {
+    pub(super) fn from_settings(play_mode: PlayMode, trigger_mode: TriggerMode) -> Self {
+        if trigger_mode == TriggerMode::PlayAndHold {
+            return Self::PlayAndHold;
+        }
+        match play_mode {
+            PlayMode::Default => Self::Default,
+            PlayMode::Loop => Self::Loop,
+            PlayMode::Continue => Self::Continue,
+        }
+    }
+
+    pub(super) fn next(self) -> Self {
+        match self {
+            Self::Default => Self::Loop,
+            Self::Loop => Self::Continue,
+            Self::Continue => Self::PlayAndHold,
+            Self::PlayAndHold => Self::Default,
+        }
+    }
+
+    pub(super) fn icon(self) -> icons::IconPair {
+        match self {
+            Self::Default => icons::PLAYMODE_DEFAULT,
+            Self::Loop => icons::PLAYMODE_LOOP,
+            Self::Continue => icons::PLAYMODE_CONTINUE,
+            Self::PlayAndHold => icons::TRIGGER_HOLD,
+        }
+    }
+
+    pub(super) fn tooltip(self) -> &'static str {
+        match self {
+            Self::Default => "Play Mode: Default",
+            Self::Loop => "Play Mode: Loop",
+            Self::Continue => "Play Mode: Continue",
+            Self::PlayAndHold => "Play Mode: Play & Hold - sounds play while the key is held",
+        }
+    }
+
+    fn settings(self) -> (PlayMode, TriggerMode) {
+        match self {
+            Self::Default => (PlayMode::Default, TriggerMode::Stop),
+            Self::Loop => (PlayMode::Loop, TriggerMode::Stop),
+            Self::Continue => (PlayMode::Continue, TriggerMode::Stop),
+            Self::PlayAndHold => (PlayMode::Default, TriggerMode::PlayAndHold),
+        }
     }
 }
 
-pub(super) fn update_play_mode_button<T>(button: &T, mode: PlayMode)
+pub(super) fn set_cycle_mode(
+    mode: CycleMode,
+    state: &Arc<AppState>,
+) -> Result<(), commands::CommandError> {
+    let (play_mode, trigger_mode) = mode.settings();
+    commands::set_trigger_mode(trigger_mode.as_str().to_string(), Arc::clone(&state.config))?;
+    commands::set_play_mode(
+        play_mode.as_str().to_string(),
+        Arc::clone(&state.config),
+        Arc::clone(&state.player),
+    )
+}
+
+pub(super) fn update_play_mode_button<T>(button: &T, mode: CycleMode)
 where
     T: IsA<gtk4::Button> + IsA<gtk4::Widget>,
 {
-    icons::apply_button_icon(button, play_mode_icon(mode));
-    set_tooltip_if_changed(button, play_mode_tooltip(mode));
-    set_active_class(button, mode != PlayMode::Default);
-}
-
-pub(super) fn play_mode_tooltip(mode: PlayMode) -> &'static str {
-    match mode {
-        PlayMode::Loop => "Play Mode: Loop",
-        PlayMode::Continue => "Play Mode: Continue",
-        PlayMode::Default => "Play Mode: Default",
-    }
-}
-
-pub(super) fn trigger_mode_icon(mode: TriggerMode) -> icons::IconPair {
-    match mode {
-        TriggerMode::Overlap => icons::TRIGGER_OVERLAP,
-        TriggerMode::Stop => icons::STOP,
-        TriggerMode::PushToLoop => icons::PLAYMODE_LOOP,
-        TriggerMode::PlayAndHold => icons::TRIGGER_HOLD,
-    }
-}
-
-pub(super) fn update_trigger_mode_button<T>(button: &T, mode: TriggerMode)
-where
-    T: IsA<gtk4::Button> + IsA<gtk4::Widget>,
-{
-    icons::apply_button_icon(button, trigger_mode_icon(mode));
-    set_tooltip_if_changed(button, trigger_mode_tooltip(mode));
-    set_active_class(button, mode != TriggerMode::Stop);
-}
-
-pub(super) fn trigger_mode_tooltip(mode: TriggerMode) -> &'static str {
-    match mode {
-        TriggerMode::Overlap => "Sound Trigger: Play & Overlap",
-        TriggerMode::Stop => "Sound Trigger: Play & Stop",
-        TriggerMode::PushToLoop => "Sound Trigger: Push to Loop",
-        TriggerMode::PlayAndHold => "Sound Trigger: Play & Hold",
-    }
+    icons::apply_button_icon(button, mode.icon());
+    set_tooltip_if_changed(button, mode.tooltip());
+    set_active_class(button, mode != CycleMode::Default);
 }
 
 impl TransportBar {
@@ -173,12 +227,11 @@ impl TransportBar {
     }
 
     pub fn cycle_play_mode(&self) {
-        let new_mode = self.inner.state.config.lock().settings.play_mode.next();
-        if let Err(e) = commands::set_play_mode(
-            new_mode.as_str().to_string(),
-            Arc::clone(&self.inner.state.config),
-            Arc::clone(&self.inner.state.player),
-        ) {
+        let new_mode = {
+            let cfg = self.inner.state.config.lock();
+            CycleMode::from_settings(cfg.settings.play_mode, cfg.settings.trigger_mode).next()
+        };
+        if let Err(e) = set_cycle_mode(new_mode, &self.inner.state) {
             log::warn!("Set play mode failed via hotkey: {e}");
             self.refresh_controls_from_state();
             return;
@@ -198,8 +251,10 @@ impl TransportBar {
         };
         self.apply_headphones_state(local_mute);
         self.apply_mic_state(mic_passthrough);
-        update_play_mode_button(&self.inner.playmode_btn, play_mode);
-        update_trigger_mode_button(&self.inner.triggermode_btn, trigger_mode);
+        update_play_mode_button(
+            &self.inner.playmode_btn,
+            CycleMode::from_settings(play_mode, trigger_mode),
+        );
     }
 
     pub(super) fn apply_headphones_state(&self, local_mute: bool) {

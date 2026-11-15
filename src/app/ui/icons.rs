@@ -62,10 +62,6 @@ pub const PLAYMODE_LOOP: IconPair =
     IconPair::with_fallbacks("lsb-repeat-symbolic", &["media-playlist-repeat-symbolic"]);
 pub const PLAYMODE_CONTINUE: IconPair =
     IconPair::with_fallbacks("lsb-list-end-symbolic", &["go-last-symbolic"]);
-pub const TRIGGER_OVERLAP: IconPair = IconPair::with_fallbacks(
-    "lsb-overlap-symbolic",
-    &["media-playlist-consecutive-symbolic", "view-grid-symbolic"],
-);
 pub const TRIGGER_HOLD: IconPair =
     IconPair::with_fallbacks("lsb-hold-symbolic", &["input-keyboard-symbolic"]);
 pub const REFRESH: IconPair =
@@ -104,7 +100,6 @@ const ALL_ICONS: &[IconPair] = &[
     PLAYMODE_DEFAULT,
     PLAYMODE_LOOP,
     PLAYMODE_CONTINUE,
-    TRIGGER_OVERLAP,
     TRIGGER_HOLD,
     REFRESH,
     DISCLOSURE_CLOSED,

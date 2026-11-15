@@ -13,8 +13,8 @@ use crate::ui::icons;
 
 use super::helpers::{format_duration, install_volume_editor, is_seek_key};
 use super::playback::{
-    update_headphones_button, update_mic_button, update_play_mode_button, update_play_pause_button,
-    update_trigger_mode_button,
+    set_cycle_mode, update_headphones_button, update_mic_button, update_play_mode_button,
+    update_play_pause_button, CycleMode,
 };
 use super::{ScrubInput, TransportBar};
 
@@ -476,33 +476,16 @@ impl TransportBar {
                 let Some(inner) = inner_weak.upgrade() else {
                     return;
                 };
-                let current_mode = inner.state.config.lock().settings.play_mode;
-                let new_mode = current_mode.next();
-                let _ = commands::set_play_mode(
-                    new_mode.as_str().to_string(),
-                    Arc::clone(&inner.state.config),
-                    Arc::clone(&inner.state.player),
-                );
-                update_play_mode_button(btn, new_mode);
-            });
-        }
-
-        {
-            let inner_weak = inner_weak.clone();
-            self.inner.triggermode_btn.connect_clicked(move |btn| {
-                let Some(inner) = inner_weak.upgrade() else {
-                    return;
+                let new_mode = {
+                    let cfg = inner.state.config.lock();
+                    CycleMode::from_settings(cfg.settings.play_mode, cfg.settings.trigger_mode)
+                        .next()
                 };
-                let current_mode = inner.state.config.lock().settings.trigger_mode;
-                let new_mode = current_mode.next();
-                if let Err(error) = commands::set_trigger_mode(
-                    new_mode.as_str().to_string(),
-                    Arc::clone(&inner.state.config),
-                ) {
-                    log::warn!("Set sound trigger mode failed: {error}");
+                if let Err(error) = set_cycle_mode(new_mode, &inner.state) {
+                    log::warn!("Set play mode failed: {error}");
                     return;
                 }
-                update_trigger_mode_button(btn, new_mode);
+                update_play_mode_button(btn, new_mode);
             });
         }
 

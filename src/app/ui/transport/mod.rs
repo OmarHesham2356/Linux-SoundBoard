@@ -85,7 +85,6 @@ struct TransportInner {
     headphones_btn: ToggleButton,
     mic_btn: ToggleButton,
     playmode_btn: Button,
-    triggermode_btn: Button,
     refresh_btn: Button,
     search_entry: SearchEntry,
     settings_btn: Button,

@@ -10,10 +10,7 @@ use gtk4::{Adjustment, Align, Box as GtkBox, Entry, Label, Orientation, Scale, S
 use crate::app_state::AppState;
 
 use super::helpers::begin_volume_edit;
-use super::playback::{
-    play_mode_icon, play_mode_tooltip, trigger_mode_icon, trigger_mode_tooltip,
-    update_play_mode_button, update_play_pause_button, update_trigger_mode_button,
-};
+use super::playback::{update_play_mode_button, update_play_pause_button, CycleMode};
 use super::{ScrubInteraction, TransportBar, TransportInner, TRANSPORT_BUTTON_SIZE};
 use crate::ui::icons;
 
@@ -274,24 +271,14 @@ impl TransportBar {
         let utility_group = GtkBox::new(Orientation::Horizontal, 4);
         utility_group.add_css_class("transport-cluster");
 
-        let playmode_btn = icons::button(play_mode_icon(play_mode), play_mode_tooltip(play_mode));
+        let cycle_mode = CycleMode::from_settings(play_mode, trigger_mode);
+        let playmode_btn = icons::button(cycle_mode.icon(), cycle_mode.tooltip());
         playmode_btn.add_css_class("transport-btn");
         playmode_btn.add_css_class("transport-icon-btn");
         playmode_btn.add_css_class("transport-playmode-btn");
         apply_transport_button_size(&playmode_btn);
-        update_play_mode_button(&playmode_btn, play_mode);
+        update_play_mode_button(&playmode_btn, cycle_mode);
         utility_group.append(&playmode_btn);
-
-        let triggermode_btn = icons::button(
-            trigger_mode_icon(trigger_mode),
-            trigger_mode_tooltip(trigger_mode),
-        );
-        triggermode_btn.add_css_class("transport-btn");
-        triggermode_btn.add_css_class("transport-icon-btn");
-        triggermode_btn.add_css_class("transport-triggermode-btn");
-        apply_transport_button_size(&triggermode_btn);
-        update_trigger_mode_button(&triggermode_btn, trigger_mode);
-        utility_group.append(&triggermode_btn);
 
         let refresh_btn = icons::button(icons::REFRESH, "Refresh Sounds");
         refresh_btn.add_css_class("transport-btn");
@@ -350,7 +337,6 @@ impl TransportBar {
             headphones_btn: headphones_btn.clone(),
             mic_btn: mic_btn.clone(),
             playmode_btn: playmode_btn.clone(),
-            triggermode_btn: triggermode_btn.clone(),
             refresh_btn: refresh_btn.clone(),
             search_entry: search_entry.clone(),
             settings_btn: settings_btn.clone(),
