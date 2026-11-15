@@ -10,6 +10,37 @@ use crate::app_state::AppState;
 use crate::commands;
 use crate::config::{DefaultSourceMode, MicLatencyProfile};
 
+#[cfg(target_os = "linux")]
+const MIC_GROUP_TITLE: &str = "Microphone Source";
+#[cfg(windows)]
+const MIC_GROUP_TITLE: &str = "Soundboard Output";
+
+#[cfg(target_os = "linux")]
+const MIC_GROUP_DESCRIPTION: &str = "Select which microphone to use for virtual mic passthrough";
+#[cfg(windows)]
+const MIC_GROUP_DESCRIPTION: &str =
+    "Windows has no built-in virtual microphone. Install a virtual audio cable (VB-CABLE, VoiceMeeter) and choose its playback device here; cables are marked in the list.";
+
+#[cfg(target_os = "linux")]
+const MIC_ROW_TITLE: &str = "Microphone";
+#[cfg(windows)]
+const MIC_ROW_TITLE: &str = "Playback device";
+
+#[cfg(target_os = "linux")]
+const STATUS_ROW_TITLE: &str = "Passthrough Status";
+#[cfg(windows)]
+const STATUS_ROW_TITLE: &str = "Output Status";
+
+#[cfg(target_os = "linux")]
+const STATUS_ACTIVE_PREFIX: &str = "Active";
+#[cfg(windows)]
+const STATUS_ACTIVE_PREFIX: &str = "Routing to";
+
+#[cfg(target_os = "linux")]
+const STATUS_WAITING: &str = "Waiting for microphone…";
+#[cfg(windows)]
+const STATUS_WAITING: &str = "Waiting for an output device…";
+
 fn mic_latency_profile_subtitle(profile: MicLatencyProfile) -> &'static str {
     match profile {
         MicLatencyProfile::Balanced => "Stable default for most systems",
@@ -22,8 +53,8 @@ fn mic_latency_profile_subtitle(profile: MicLatencyProfile) -> &'static str {
 
 pub(super) fn build_mic_group(state: Arc<AppState>) -> adw::PreferencesGroup {
     let mic_group = adw::PreferencesGroup::builder()
-        .title("Microphone Source")
-        .description("Select which microphone to use for virtual mic passthrough")
+        .title(MIC_GROUP_TITLE)
+        .description(MIC_GROUP_DESCRIPTION)
         .build();
 
     {
@@ -37,9 +68,13 @@ pub(super) fn build_mic_group(state: Arc<AppState>) -> adw::PreferencesGroup {
             )
         };
 
-        let mic_row = adw::ComboRow::builder().title("Microphone").build();
+        let mic_row = adw::ComboRow::builder().title(MIC_ROW_TITLE).build();
 
-        let mut items: Vec<&str> = vec!["Auto-detect (Default)"];
+        #[cfg(target_os = "linux")]
+        let automatic_label = "Auto-detect (Default)";
+        #[cfg(windows)]
+        let automatic_label = "Automatic (virtual cable if installed)";
+        let mut items: Vec<&str> = vec![automatic_label];
         let source_names: Vec<String> = sources.iter().map(|s| s.name.clone()).collect();
         let source_labels: Vec<String> = sources.iter().map(|s| s.display_name.clone()).collect();
         for label in &source_labels {
@@ -175,6 +210,8 @@ pub(super) fn build_mic_group(state: Arc<AppState>) -> adw::PreferencesGroup {
                 row.set_sensitive(true);
             }
         });
+        // Virtual-mic routing modes only exist for the PipeWire engine.
+        #[cfg(target_os = "linux")]
         mic_group.add(&default_mode_row);
 
         let latency_profile_row = adw::ComboRow::builder()
@@ -258,7 +295,12 @@ pub(super) fn build_mic_group(state: Arc<AppState>) -> adw::PreferencesGroup {
                 row.set_sensitive(true);
             }
         });
+        // Mic latency profiles only exist for the PipeWire engine.
+        #[cfg(target_os = "linux")]
         mic_group.add(&latency_profile_row);
+
+        #[cfg(windows)]
+        let _ = (&default_mode_row, &latency_profile_row);
 
         let active_target = commands::active_capture_target(Arc::clone(&state.player));
         let active_target_label = match active_target.as_deref() {
@@ -268,12 +310,12 @@ pub(super) fn build_mic_group(state: Arc<AppState>) -> adw::PreferencesGroup {
                     .find(|s| s.name == name)
                     .map(|s| s.display_name.as_str())
                     .unwrap_or(name);
-                format!("Active: {display}")
+                format!("{STATUS_ACTIVE_PREFIX}: {display}")
             }
-            None => "Waiting for microphone…".to_string(),
+            None => STATUS_WAITING.to_string(),
         };
         let status_row = adw::ActionRow::builder()
-            .title("Passthrough Status")
+            .title(STATUS_ROW_TITLE)
             .subtitle(&active_target_label)
             .build();
         mic_group.add(&status_row);

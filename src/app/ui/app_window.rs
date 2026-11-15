@@ -28,6 +28,45 @@ fn cap_sidebar_width(width: i32) -> i32 {
     width.min(MAX_SIDEBAR_WIDTH)
 }
 
+/// Explains why the platform cannot provide a virtual microphone yet.
+///
+/// PipeWire supplies one on Linux. Windows has no equivalent audio server: the
+/// backend renders through WASAPI and only reaches other applications through a
+/// virtual audio cable the user installs, so that platform asks for a cable
+/// instead of asking for PipeWire.
+fn virtual_microphone_banner(state: &AppState) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let pipewire = state.pipewire_status.lock();
+        if pipewire.available {
+            return None;
+        }
+        Some(
+            "PipeWire not detected — virtual mic unavailable. \
+             Install PipeWire for full functionality."
+                .to_string(),
+        )
+    }
+
+    #[cfg(windows)]
+    {
+        let has_cable = state
+            .player
+            .list_audio_sources()
+            .iter()
+            .any(|source| source.is_virtual);
+        if has_cable {
+            return None;
+        }
+        Some(
+            "No virtual microphone detected — install a virtual audio cable \
+             (for example VB-CABLE) and select it under Preferences → Audio → \
+             Soundboard Output."
+                .to_string(),
+        )
+    }
+}
+
 pub fn build_window(
     app: &Application,
     state: Arc<AppState>,
@@ -63,18 +102,12 @@ pub fn build_window(
     let dialog_host = DialogHost::new();
     let root_box = GtkBox::new(Orientation::Vertical, 0);
 
-    {
-        let pw = state.pipewire_status.lock();
-        if !pw.available {
-            let banner = adw::Banner::new(
-                "PipeWire not detected — virtual mic unavailable. \
-                 Install PipeWire for full functionality.",
-            );
-            banner.set_button_label(Some("Dismiss"));
-            banner.set_revealed(true);
-            banner.connect_button_clicked(|b| b.set_revealed(false));
-            root_box.append(&banner);
-        }
+    if let Some(message) = virtual_microphone_banner(&state) {
+        let banner = adw::Banner::new(&message);
+        banner.set_button_label(Some("Dismiss"));
+        banner.set_revealed(true);
+        banner.connect_button_clicked(|b| b.set_revealed(false));
+        root_box.append(&banner);
     }
 
     {

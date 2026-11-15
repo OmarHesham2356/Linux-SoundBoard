@@ -1357,9 +1357,20 @@ type TraySlot = Rc<RefCell<Option<Rc<crate::tray::TrayService>>>>;
 
 fn install_tray(app: &Application, state: &Arc<AppState>) -> TraySlot {
     let slot: TraySlot = Rc::new(RefCell::new(None));
-    let Some(connection) = app.dbus_connection() else {
-        warn!("No session bus is available, so there will be no tray icon");
-        return slot;
+    // Windows has no session bus: the tray icon is a notification-area icon
+    // instead, so there is no connection to carry around there.
+    #[cfg(target_os = "linux")]
+    let connection: Option<gio::DBusConnection> = match app.dbus_connection() {
+        Some(connection) => Some(connection),
+        None => {
+            warn!("No session bus is available, so there will be no tray icon");
+            return slot;
+        }
+    };
+    #[cfg(windows)]
+    let connection: Option<gio::DBusConnection> = {
+        let _ = app;
+        None
     };
 
     {
@@ -1387,7 +1398,9 @@ fn install_tray(app: &Application, state: &Arc<AppState>) -> TraySlot {
         crate::ui_event_bridge::set_tray_enabled_handler(move |enabled| {
             let existing = slot.borrow_mut().take();
             match (enabled, existing) {
-                (true, None) => *slot.borrow_mut() = start_tray_service(&connection, &state),
+                (true, None) => {
+                    *slot.borrow_mut() = start_tray_service(connection.as_ref(), &state)
+                }
                 (false, Some(tray)) => tray.shutdown(),
                 (_, unchanged) => *slot.borrow_mut() = unchanged,
             }
@@ -1395,7 +1408,7 @@ fn install_tray(app: &Application, state: &Arc<AppState>) -> TraySlot {
     }
 
     if state.config.lock().settings.tray_enabled {
-        *slot.borrow_mut() = start_tray_service(&connection, state);
+        *slot.borrow_mut() = start_tray_service(connection.as_ref(), state);
     }
     slot
 }
@@ -1441,18 +1454,28 @@ fn install_now_playing(tray: &TraySlot, mpris: &Option<Rc<crate::mpris::MprisSer
 }
 
 fn start_tray_service(
-    connection: &gio::DBusConnection,
+    connection: Option<&gio::DBusConnection>,
     state: &Arc<AppState>,
 ) -> Option<Rc<crate::tray::TrayService>> {
     let real_mic_muted = !state.config.lock().settings.mic_passthrough;
-    match crate::tray::TrayService::start(
-        connection,
-        crate::tray::menu::build(true, real_mic_muted),
-        crate::ui_event_bridge::post_tray_action,
-    ) {
+    let menu = crate::tray::menu::build(true, real_mic_muted);
+    let handler = crate::ui_event_bridge::post_tray_action;
+
+    #[cfg(target_os = "linux")]
+    let started = match connection {
+        Some(connection) => crate::tray::TrayService::start(connection, menu, handler),
+        None => return None,
+    };
+    #[cfg(windows)]
+    let started = {
+        let _ = connection;
+        crate::tray::TrayService::start(menu, handler)
+    };
+
+    match started {
         Ok(tray) => Some(Rc::new(tray)),
         Err(error) => {
-            warn!("Could not export a tray icon: {error}");
+            warn!("Could not create a tray icon: {error}");
             None
         }
     }

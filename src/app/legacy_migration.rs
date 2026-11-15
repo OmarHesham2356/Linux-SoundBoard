@@ -748,7 +748,7 @@ fn remove_stale_candidates(parent: &Path, prefix: &str) -> Result<(), LegacyMigr
         }
     }
     if removed {
-        fs::File::open(parent)?.sync_all()?;
+        crate::fs_sync::sync_dir(parent)?;
     }
     Ok(())
 }
@@ -805,7 +805,7 @@ fn ensure_backup(
         }
         fs::rename(&candidate, &backup)?;
         if let Some(parent) = backup.parent() {
-            fs::File::open(parent)?.sync_all()?;
+            crate::fs_sync::sync_dir(parent)?;
         }
         observer(LegacyMigrationBoundary::BackupPublished)?;
         Ok(())
@@ -983,7 +983,7 @@ fn finalize_database(
         [],
     )?;
     drop(connection);
-    fs::File::open(path)?.sync_all()?;
+    crate::fs_sync::sync_file(path)?;
     observer(LegacyMigrationBoundary::DatabaseSynced)?;
     Ok(())
 }
@@ -1062,7 +1062,7 @@ fn migrate_legacy_database_observed(
         observer(LegacyMigrationBoundary::BeforeDatabasePublish)?;
         fs::rename(&candidate, destination)?;
         if let Some(parent) = destination.parent() {
-            fs::File::open(parent)?.sync_all()?;
+            crate::fs_sync::sync_dir(parent)?;
         }
         observer(LegacyMigrationBoundary::DatabasePublished)?;
         Ok(report)
@@ -1146,7 +1146,7 @@ pub fn database_identity(path: &Path) -> Result<DatabaseIdentity, LegacyMigratio
             "application_id",
             crate::library_store::DATABASE_APPLICATION_ID,
         )?;
-        fs::File::open(path)?.sync_all()?;
+        crate::fs_sync::sync_file(path)?;
     }
     Ok(DatabaseIdentity {
         library_id,
@@ -1341,7 +1341,7 @@ pub fn restore_legacy_backup(
         }
         set_private_permissions(config_path)?;
         if let Some(parent) = config_path.parent() {
-            fs::File::open(parent)?.sync_all()?;
+            crate::fs_sync::sync_dir(parent)?;
         }
         Ok(())
     })();
@@ -1374,9 +1374,9 @@ pub fn initialize_empty_library(path: &Path, library_id: &str) -> Result<(), Leg
         [],
     )?;
     drop(connection);
-    fs::File::open(path)?.sync_all()?;
+    crate::fs_sync::sync_file(path)?;
     if let Some(parent) = path.parent() {
-        fs::File::open(parent)?.sync_all()?;
+        crate::fs_sync::sync_dir(parent)?;
     }
     Ok(())
 }

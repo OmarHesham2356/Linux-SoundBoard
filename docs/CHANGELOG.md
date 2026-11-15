@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- **Windows virtual microphone routing:** the Windows build lists its audio outputs, marks installed virtual audio cables, routes soundboard playback to the device you choose, and remembers that choice.
+- **Windows release downloads:** tagged builds publish the Inno Setup installer, the portable zip, and `SHA256SUMS-windows.txt` on the GitHub release.
+
+### Changed
+
+- **Windows settings:** the Microphone Source category is now Soundboard Output on Windows, and the PipeWire-only routing and latency profile rows are hidden there.
+
 ## [2.4.4] - 2026-08-30
 
 ### Changed

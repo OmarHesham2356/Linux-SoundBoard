@@ -1,0 +1,97 @@
+name: Windows release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and attach the Windows artifacts to
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-release:
+    name: Windows artifacts
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up MSYS2 with GTK4 and libadwaita
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-adwaita-icon-theme
+            mingw-w64-x86_64-opus
+            zip
+
+      - name: Read Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel = \"\(.*\)\"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust with a MinGW host
+        run: |
+          channel="${{ steps.rust-toolchain.outputs.channel }}"
+          rustup toolchain install "${channel}-x86_64-pc-windows-gnu" \
+            --profile minimal --target x86_64-pc-windows-gnu
+          rustup default "${channel}-x86_64-pc-windows-gnu"
+
+      - name: Build (release)
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc
+          RUSTUP_TOOLCHAIN: ${{ steps.rust-toolchain.outputs.channel }}-x86_64-pc-windows-gnu
+        run: |
+          export LIBOPUS_LIB_DIR="$(cygpath -w "$MINGW_PREFIX/lib")"
+          cargo build --release --locked
+
+      - name: Package portable build
+        run: bash packaging/windows/package.sh
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          $version = (Get-Content dist/windows/version.txt -Raw).Trim()
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "packaging/windows/linux-soundboard.iss"
+
+      - name: Write Windows checksums
+        run: |
+          cd dist
+          sha256sum windows-installer/*.exe LinuxSoundboard-*-windows-x64-portable.zip \
+            > SHA256SUMS-windows.txt
+          cat SHA256SUMS-windows.txt
+
+      - name: Attach artifacts to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = if ("${{ github.event.inputs.tag }}") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "Linux Soundboard $tag" --generate-notes
+          }
+          gh release upload $tag `
+            "dist/windows-installer/*.exe" `
+            "dist/LinuxSoundboard-*-windows-x64-portable.zip" `
+            "dist/SHA256SUMS-windows.txt" `
+            --clobber

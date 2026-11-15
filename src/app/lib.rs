@@ -9,6 +9,7 @@ pub mod library_store;
 pub(crate) mod app_meta;
 pub(crate) mod app_state;
 pub(crate) mod diagnostics;
+pub(crate) mod fs_sync;
 pub(crate) mod hotkeys;
 pub(crate) mod mpris;
 pub(crate) mod timer_registry;

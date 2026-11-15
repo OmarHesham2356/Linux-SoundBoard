@@ -91,6 +91,7 @@ matching install path.
 | Debian / Ubuntu | Native `.deb` package |
 | Fedora | Native `.rpm` package |
 | Other distributions | Release tarball with the per-user installer |
+| Windows 10 / 11 x64 (preview) | Inno Setup installer or portable zip from the Releases page |
 
 > **Privileges:** Native packages and the Wayland hotkey helper may require your
 > package manager and password. AppImage and tarball installs stay under
@@ -112,6 +113,31 @@ chmod +x linux-soundboard-x86_64.AppImage
 On first launch, choose **Install for persistent virtual mic**, **Run
 temporarily**, or **Exit**. A persistent install keeps the AppImage under your
 user account and starts the audio engine as a systemd user service.
+
+### Windows (preview)
+
+Windows 10 and 11 x64 builds ship as an Inno Setup installer
+(`LinuxSoundboard-<version>-windows-x64-setup.exe`) and as a portable `.zip`.
+The installer asks for administrator rights only when you pick a machine-wide
+directory; a per-user install needs none.
+
+Windows has no built-in virtual microphone, and no application can add one
+without installing a kernel-mode audio driver. Install a virtual audio cable
+first, then pick its playback device under **Preferences → Audio → Soundboard
+Output**. Installed cables are marked "virtual microphone" in the list.
+
+| Option | Notes |
+| --- | --- |
+| [VB-CABLE](https://vb-audio.com/Cable/) | Smallest option; select `CABLE Input` as the soundboard output |
+| [VoiceMeeter](https://voicemeeter.com/) | Adds a mixer when you also want your own voice in the same stream |
+| Virtual Audio Cable | Paid, supports several independent cables |
+
+Selecting a cable sends the soundboard to that cable only. To hear it on your
+own speakers too, enable **Listen to this device** on the cable's recording
+device in the Windows sound settings.
+
+The Windows build has no PipeWire engine, no systemd audio service, and no
+`swhkd` helper: global hotkeys use a native low-level keyboard hook.
 
 ### Inspect before running
 
@@ -251,6 +277,13 @@ without `swhkd`; only Wayland global hotkeys are unavailable.
 - **Microphone routing:** EasyEffects, Bluetooth profiles, PipeWire and
   WirePlumber configuration, and application-specific routing can change the
   result.
+- **Windows virtual microphone:** Windows ships no virtual microphone and this
+  app cannot install a kernel driver, so route the soundboard to a virtual
+  audio cable you installed yourself (see
+  [Windows (preview)](#windows-preview)).
+- **Windows hotkeys:** The `swhkd` daemon is Linux-only; the Windows build uses
+  its own keyboard hook, so hotkey combos that need an unsupported key name are
+  rejected.
 
 Start with [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) when audio routing
 does not match the selected mode.
@@ -309,6 +342,31 @@ cd Linux-SoundBoard
 cargo build --release
 ./packaging/linux/install-user.sh install ./target/release/linux-soundboard
 ```
+
+<details>
+<summary><strong>Windows (MSYS2)</strong></summary>
+
+Build inside an MSYS2 **MINGW64** shell:
+
+```bash
+pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf \
+  mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita \
+  mingw-w64-x86_64-adwaita-icon-theme mingw-w64-x86_64-opus zip
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup default stable-x86_64-pc-windows-gnu
+cargo build --release
+bash packaging/windows/package.sh
+```
+
+`packaging/windows/package.sh` copies the MinGW runtime DLLs, GSettings schemas,
+gdk-pixbuf loaders, and icon themes into `dist/windows/` and writes the portable
+zip next to it. Build the installer with Inno Setup 6:
+
+```powershell
+ISCC.exe /DAppVersion=2.4.4 packaging/windows/linux-soundboard.iss
+```
+
+</details>
 
 See [docs/INSTALL.md](docs/INSTALL.md) for the full source-build notes.
 

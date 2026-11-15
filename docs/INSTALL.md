@@ -340,6 +340,76 @@ sudo zypper install fuse
 
 ---
 
+## Windows (preview)
+
+Windows 10 and 11 x64 builds are on the
+[Releases page](https://github.com/germanua/Linux-SoundBoard/releases):
+
+| File | Use |
+| --- | --- |
+| `LinuxSoundboard-<version>-windows-x64-setup.exe` | Inno Setup installer with Start menu and optional desktop shortcut |
+| `LinuxSoundboard-<version>-windows-x64-portable.zip` | Extract anywhere and run `linux-soundboard.exe` |
+| `SHA256SUMS-windows.txt` | SHA-256 for both files above |
+
+The MinGW runtime DLLs, GTK settings schemas, and icon themes travel inside the
+package, so no separate GTK installation is needed. The Windows builds are not
+code-signed, so SmartScreen warns on first launch; verify a download before
+running it:
+
+```powershell
+(Get-FileHash .\LinuxSoundboard-<version>-windows-x64-setup.exe -Algorithm SHA256).Hash
+```
+
+### Virtual microphone
+
+Windows has no built-in virtual microphone, and an application cannot add one
+without a kernel-mode audio driver. Install a virtual audio cable and select its
+playback device under **Preferences → Audio → Soundboard Output**:
+
+| Cable | Device to select |
+| --- | --- |
+| [VB-CABLE](https://vb-audio.com/Cable/) | `CABLE Input (VB-Audio Virtual Cable)` |
+| [VoiceMeeter](https://voicemeeter.com/) | `VoiceMeeter Input` (or `VoiceMeeter Aux Input`) |
+| Virtual Audio Cable | `Line 1 (Virtual Audio Cable)` |
+
+Installed cables are labelled "virtual microphone" in the list, and the choice
+is remembered in `config.json`. Other applications then pick the cable's
+recording device as their microphone.
+
+Selecting a cable sends the soundboard to that cable only. To hear it locally as
+well, open the cable's recording device in the Windows sound settings, open its
+**Properties**, and enable **Listen to this device**.
+
+### Differences from the Linux build
+
+- No PipeWire or PulseAudio engine, no systemd user service, and no virtual
+  microphone created by the app.
+- No `swhkd` hotkey daemon. Global hotkeys use a low-level keyboard hook that
+  reports key presses and releases, so push-to-loop works.
+- Settings and the sound library live under `%APPDATA%\linux-soundboard`.
+
+### Build from source on Windows
+
+Build inside an MSYS2 **MINGW64** shell:
+
+```bash
+pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf \
+  mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita \
+  mingw-w64-x86_64-adwaita-icon-theme mingw-w64-x86_64-opus zip
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup default stable-x86_64-pc-windows-gnu
+cargo build --release
+bash packaging/windows/package.sh
+```
+
+Then build the installer with Inno Setup 6:
+
+```powershell
+ISCC.exe /DAppVersion=2.4.4 packaging/windows/linux-soundboard.iss
+```
+
+---
+
 ## Wayland and global hotkeys
 
 On Wayland, Linux Soundboard uses `swhkd` for global hotkeys.

@@ -1,6 +1,8 @@
+#[cfg(target_os = "linux")]
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "linux")]
 use super::command_runner::{CommandRunner, SystemCommandRunner};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -10,10 +12,25 @@ pub struct PipeWireStatus {
     pub error: Option<String>,
 }
 
+#[cfg(target_os = "linux")]
 pub fn check_pipewire() -> PipeWireStatus {
     check_pipewire_with_runner(&SystemCommandRunner)
 }
 
+/// Windows does not run PipeWire: playback goes straight to WASAPI and a
+/// virtual microphone comes from an installed virtual audio cable. Nothing is
+/// missing on that platform, so detection reports success and the UI never asks
+/// the user to install PipeWire.
+#[cfg(windows)]
+pub fn check_pipewire() -> PipeWireStatus {
+    PipeWireStatus {
+        available: true,
+        version: None,
+        error: None,
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn check_pipewire_with_runner(runner: &impl CommandRunner) -> PipeWireStatus {
     if let Ok(output) = runner.run("pw-cli", &["info", "0"]) {
         if output.success {
@@ -55,6 +72,7 @@ fn check_pipewire_with_runner(runner: &impl CommandRunner) -> PipeWireStatus {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn pipewire_runtime_dir() -> String {
     #[cfg(target_os = "linux")]
     {
@@ -67,6 +85,7 @@ fn pipewire_runtime_dir() -> String {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn get_pipewire_version(runner: &impl CommandRunner) -> Option<String> {
     if let Ok(output) = runner.run("pipewire", &["--version"]) {
         if output.success {
@@ -82,7 +101,7 @@ fn get_pipewire_version(runner: &impl CommandRunner) -> Option<String> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::collections::HashMap;
     use std::io;

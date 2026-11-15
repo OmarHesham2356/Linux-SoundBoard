@@ -96,7 +96,7 @@ fn ensure_schema_6_backup(path: &Path, original: &[u8]) -> Result<(), Box<dyn st
         }
         set_private_permissions(&backup_path)?;
         if let Some(parent) = backup_path.parent() {
-            fs::File::open(parent)?.sync_all()?;
+            crate::fs_sync::sync_dir(parent)?;
         }
         Ok(())
     })();
@@ -244,7 +244,7 @@ impl Config {
         observer(ConfigSaveBoundary::Renamed)
             .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
         if let Some(parent) = path.parent() {
-            if let Err(err) = fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+            if let Err(err) = crate::fs_sync::sync_dir(parent) {
                 return Err(Box::new(std::io::Error::other(format!(
                     "Configuration was written but its directory could not be synced: {err}"
                 ))));
