@@ -1509,10 +1509,33 @@ fn soft_limit(sample: f32) -> f32 {
     sample.signum() * (KNEE + (1.0 - KNEE) * over.tanh())
 }
 
+/// The microphone to capture. The Windows default input is used, unless that is
+/// a virtual cable: capturing one would record our own output and feed it back
+/// into the cable, which sounds like echo and never stops.
+fn choose_microphone(host: &cpal::Host) -> Option<cpal::Device> {
+    let default = host.default_input_device();
+    if let Some(device) = &default {
+        if device
+            .name()
+            .is_ok_and(|name| !is_virtual_device_name(&name))
+        {
+            return Some(device.clone());
+        }
+    }
+
+    let devices = host.input_devices().ok()?;
+    let physical = devices.into_iter().find(|device| {
+        device
+            .name()
+            .is_ok_and(|name| !is_virtual_device_name(&name))
+    });
+    physical.or(default)
+}
+
 fn run_mic_thread(shared: Arc<Mutex<MicState>>, stop: Arc<AtomicBool>) {
     let host = cpal::default_host();
-    let Some(device) = host.default_input_device() else {
-        warn!("No default Windows microphone was found; microphone passthrough is off");
+    let Some(device) = choose_microphone(&host) else {
+        warn!("No Windows microphone was found; microphone passthrough is off");
         return;
     };
     let name = device
