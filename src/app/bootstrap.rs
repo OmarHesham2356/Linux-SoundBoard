@@ -5,7 +5,6 @@ use std::fs::{File, OpenOptions};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 #[cfg(windows)]
-use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
@@ -35,7 +34,26 @@ const ENGINE_TARGET_UNIT: &str = "linux-soundboard-engine.target";
 #[cfg(unix)]
 static STORAGE_LOCK: OnceLock<Mutex<Option<Flock<File>>>> = OnceLock::new();
 #[cfg(windows)]
-static STORAGE_LOCK: OnceLock<Mutex<Option<File>>> = OnceLock::new();
+static STORAGE_LOCK: OnceLock<Mutex<Option<StorageLock>>> = OnceLock::new();
+
+/// The Windows storage guard: a named mutex plus the marker file.
+#[cfg(windows)]
+struct StorageLock {
+    _file: File,
+    /// `HANDLE` is a raw pointer, so it is kept as an integer to stay `Send`.
+    mutex: isize,
+}
+
+#[cfg(windows)]
+impl Drop for StorageLock {
+    fn drop(&mut self) {
+        // SAFETY: this is the only handle closed for this guard, and it was
+        // created by `acquire_storage_lock_at`.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.mutex as _);
+        }
+    }
+}
 
 #[cfg(unix)]
 fn acquire_storage_lock_at(path: &Path) -> Result<Flock<File>, String> {
@@ -61,24 +79,54 @@ fn acquire_storage_lock_at(path: &Path) -> Result<Flock<File>, String> {
 }
 
 #[cfg(windows)]
-fn acquire_storage_lock_at(path: &Path) -> Result<File, String> {
+fn acquire_storage_lock_at(path: &Path) -> Result<StorageLock, String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    // Deny sharing so a second process cannot open the same library.
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .share_mode(0)
         .open(path)
-        .map_err(|error| {
-            format!(
-                "Another Linux Soundboard process is using '{}': {error}",
-                path.display()
-            )
-        })
+        .map_err(|error| error.to_string())?;
+
+    // The named mutex is the real guard. An exclusively opened file used to be,
+    // but Windows keeps a killed process's file lock until the last handle is
+    // gone, which left a killed or crashed instance blocking the next launch.
+    // The kernel always releases a mutex when its owner dies.
+    let name: Vec<u16> = "Local\\LinuxSoundboardStorageLock"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: null security attributes, this thread owns the mutex on success,
+    // and the name is NUL terminated for the duration of the call.
+    let mutex = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
+    if mutex.is_null() {
+        return Err(format!(
+            "Could not create the storage lock: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: reads the calling thread's last error straight after the call.
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // SAFETY: closes the duplicate handle this call just received.
+        unsafe {
+            CloseHandle(mutex);
+        }
+        return Err(format!(
+            "Another Linux Soundboard process is using '{}'",
+            path.display()
+        ));
+    }
+
+    Ok(StorageLock {
+        _file: file,
+        mutex: mutex as isize,
+    })
 }
 
 fn ensure_storage_lock() -> Result<(), String> {
