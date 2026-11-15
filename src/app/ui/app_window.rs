@@ -521,10 +521,10 @@ fn handle_hotkey_release(state: &Arc<AppState>, binding_id: &str) {
     {
         return;
     }
-    let push_to_loop =
-        state.config.lock().settings.trigger_mode == crate::config::TriggerMode::PushToLoop;
-    if push_to_loop {
-        // Push-to-loop is exclusive: pressing stopped everything else.
+    let trigger_mode = state.config.lock().settings.trigger_mode;
+    if trigger_mode.is_hold() {
+        // Hold modes are exclusive: pressing stopped everything else, so
+        // releasing the key stops the sound that was started for it.
         let player: Arc<dyn crate::audio::PlaybackEngine> = state.player.clone();
         commands::stop_all(player);
     }

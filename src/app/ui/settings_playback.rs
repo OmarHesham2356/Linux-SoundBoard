@@ -93,18 +93,23 @@ pub(super) fn build_reproduction_group(state: Arc<AppState>) -> adw::Preferences
 
     let mode_row = adw::ComboRow::builder()
         .title("Play Mode")
-        .subtitle("Overlap mixes sounds; Stop cuts the previous one; Push to Loop plays while held")
+        .subtitle(
+            "Overlap mixes sounds; Stop cuts the previous one; Push to Loop repeats while held; \
+             Play & Hold plays once and stops when the key is released",
+        )
         .build();
     let mode_model = gtk4::StringList::new(&[
         crate::config::TriggerMode::Overlap.label(),
         crate::config::TriggerMode::Stop.label(),
         crate::config::TriggerMode::PushToLoop.label(),
+        crate::config::TriggerMode::PlayAndHold.label(),
     ]);
     mode_row.set_model(Some(&mode_model));
     mode_row.set_selected(match trigger_mode {
         crate::config::TriggerMode::Overlap => 0,
         crate::config::TriggerMode::Stop => 1,
         crate::config::TriggerMode::PushToLoop => 2,
+        crate::config::TriggerMode::PlayAndHold => 3,
     });
     {
         let state = Arc::clone(&state);
@@ -112,6 +117,7 @@ pub(super) fn build_reproduction_group(state: Arc<AppState>) -> adw::Preferences
             let mode = match row.selected() {
                 0 => crate::config::TriggerMode::Overlap,
                 2 => crate::config::TriggerMode::PushToLoop,
+                3 => crate::config::TriggerMode::PlayAndHold,
                 _ => crate::config::TriggerMode::Stop,
             };
             if let Err(error) =

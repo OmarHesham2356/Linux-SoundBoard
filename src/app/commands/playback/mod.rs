@@ -213,7 +213,7 @@ fn play_resolved_sound(
             }
             player.stop_all();
         }
-        TriggerMode::PushToLoop => player.stop_all(),
+        TriggerMode::PushToLoop | TriggerMode::PlayAndHold => player.stop_all(),
         TriggerMode::Overlap => {
             if policy.stop_other_sounds && !already_playing {
                 player.stop_all();

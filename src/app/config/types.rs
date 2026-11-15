@@ -187,6 +187,8 @@ pub enum TriggerMode {
     Stop,
     /// Play only while the binding or row is held down.
     PushToLoop,
+    /// Start on press and stop again as soon as the binding is released.
+    PlayAndHold,
 }
 
 impl TriggerMode {
@@ -195,7 +197,13 @@ impl TriggerMode {
             Self::Overlap => "overlap",
             Self::Stop => "stop",
             Self::PushToLoop => "push_to_loop",
+            Self::PlayAndHold => "play_and_hold",
         }
+    }
+
+    /// Both hold modes start on press and stop on release; only one loops.
+    pub const fn is_hold(self) -> bool {
+        matches!(self, Self::PushToLoop | Self::PlayAndHold)
     }
 
     pub const fn label(self) -> &'static str {
@@ -203,6 +211,7 @@ impl TriggerMode {
             Self::Overlap => "Play & Overlap",
             Self::Stop => "Play & Stop",
             Self::PushToLoop => "Push to Loop",
+            Self::PlayAndHold => "Play & Hold",
         }
     }
 }
@@ -215,6 +224,7 @@ impl FromStr for TriggerMode {
             "overlap" | "play_overlap" | "play_and_overlap" => Ok(Self::Overlap),
             "stop" | "play_stop" | "play_and_stop" => Ok(Self::Stop),
             "push_to_loop" | "push" | "hold" => Ok(Self::PushToLoop),
+            "play_and_hold" | "play_hold" | "hold_and_play" => Ok(Self::PlayAndHold),
             _ => Err(()),
         }
     }
@@ -947,6 +957,26 @@ mod tests {
         assert!(!policy.mute_other_sounds);
         assert!(!policy.mute_voice);
         assert!(!policy.looping);
+    }
+
+    #[test]
+    fn play_and_hold_is_a_hold_mode_that_does_not_loop() {
+        assert_eq!(
+            "play_and_hold".parse::<TriggerMode>().unwrap(),
+            TriggerMode::PlayAndHold
+        );
+        assert_eq!(TriggerMode::PlayAndHold.as_str(), "play_and_hold");
+        assert_eq!(TriggerMode::PlayAndHold.label(), "Play & Hold");
+        assert!(TriggerMode::PlayAndHold.is_hold());
+        assert!(TriggerMode::PushToLoop.is_hold());
+        assert!(!TriggerMode::Stop.is_hold());
+        assert!(!TriggerMode::Overlap.is_hold());
+
+        let settings = Settings {
+            trigger_mode: TriggerMode::PlayAndHold,
+            ..Settings::default()
+        };
+        assert!(!settings.playback_policy().looping);
     }
 
     #[test]

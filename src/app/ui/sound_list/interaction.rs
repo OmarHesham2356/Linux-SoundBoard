@@ -95,9 +95,7 @@ impl SoundListInner {
             let Some(inner) = inner_weak.upgrade() else {
                 return;
             };
-            if inner.state.config.lock().settings.trigger_mode
-                == crate::config::TriggerMode::PushToLoop
-            {
+            if inner.state.config.lock().settings.trigger_mode.is_hold() {
                 // Holding the row is handled by the press/release gesture.
                 return;
             }
@@ -371,7 +369,7 @@ impl SoundListInner {
         widget.as_ref().add_controller(gesture);
     }
 
-    /// Hold-to-loop for sound rows while Push to Loop is selected.
+    /// Hold-to-play for sound rows while Push to Loop or Play & Hold is selected.
     pub(super) fn install_push_to_loop_gesture(self: &Rc<Self>, widget: &impl IsA<gtk4::Widget>) {
         let gesture = GestureClick::new();
         gesture.set_button(gtk4::gdk::BUTTON_PRIMARY);
@@ -386,9 +384,7 @@ impl SoundListInner {
             let Some(inner) = inner_weak.upgrade() else {
                 return;
             };
-            if inner.state.config.lock().settings.trigger_mode
-                != crate::config::TriggerMode::PushToLoop
-            {
+            if !inner.state.config.lock().settings.trigger_mode.is_hold() {
                 return;
             }
             let Some(widget) = gesture.widget() else {

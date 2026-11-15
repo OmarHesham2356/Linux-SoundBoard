@@ -102,8 +102,12 @@ pub fn validate_trigger_mode(s: &str) -> Result<crate::config::TriggerMode, Comm
         "overlap" | "play_overlap" | "play_and_overlap" => Ok(crate::config::TriggerMode::Overlap),
         "stop" | "play_stop" | "play_and_stop" => Ok(crate::config::TriggerMode::Stop),
         "push_to_loop" | "push" | "hold" => Ok(crate::config::TriggerMode::PushToLoop),
+        "play_and_hold" | "play_hold" | "hold_and_play" => {
+            Ok(crate::config::TriggerMode::PlayAndHold)
+        }
         _ => Err(CommandError::Invalid(format!(
-            "Invalid trigger mode '{}'. Use 'overlap', 'stop', or 'push_to_loop'.",
+            "Invalid trigger mode '{}'. Use 'overlap', 'stop', 'push_to_loop', or \
+             'play_and_hold'.",
             s
         ))),
     }
