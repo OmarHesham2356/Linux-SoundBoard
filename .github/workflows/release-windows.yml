@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and attach the Windows artifacts to
-        required: true
+        description: Tag to attach the Windows artifacts to (defaults to v<version>)
+        required: false
 
 permissions:
   contents: write
@@ -85,10 +85,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = if ("${{ github.event.inputs.tag }}") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) {
+            if ("${{ github.event_name }}" -eq "push") {
+              $tag = "${{ github.ref_name }}"
+            } else {
+              $version = (Get-Content dist/windows/version.txt -Raw).Trim()
+              $tag = "v$version"
+            }
+          }
+          Write-Output "Publishing the Windows build to release $tag"
           gh release view $tag 2>$null | Out-Null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title "Linux Soundboard $tag" --generate-notes
+            gh release create $tag --title "Linux Soundboard $tag" --generate-notes `
+              --target "${{ github.sha }}"
           }
           gh release upload $tag `
             "dist/windows-installer/*.exe" `
