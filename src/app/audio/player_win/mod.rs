@@ -85,7 +85,7 @@ pub enum AudioBackendKind {
 struct Voice {
     sound_id: String,
     play_id: String,
-    samples: Vec<f32>,
+    samples: Arc<Vec<f32>>,
     mono: bool,
     /// Position in 48 kHz frames, fractional to allow device-rate resampling.
     position: f64,
@@ -218,8 +218,8 @@ impl PlayerState {
                     }
                 }
 
-                let mut left = sample_at(&voice.samples, voice.position, 0);
-                let mut right = sample_at(&voice.samples, voice.position, 1);
+                let mut left = sample_at(&voice.samples[..], voice.position, 0);
+                let mut right = sample_at(&voice.samples[..], voice.position, 1);
                 if cancel_center {
                     let center = (left + right) * 0.5;
                     left -= center;
@@ -264,6 +264,7 @@ fn sample_at(samples: &[f32], position: f64, channel: usize) -> f32 {
 
 pub struct AudioPlayer {
     state: Arc<Mutex<PlayerState>>,
+    cache: Arc<Mutex<SampleCache>>,
     stop: Arc<AtomicBool>,
     reload: Arc<AtomicU64>,
     mic: Arc<Mutex<MicState>>,
@@ -309,6 +310,23 @@ impl AudioPlayer {
         player
     }
 
+    /// A player that never opens a device or spawns a thread, for tests.
+    #[cfg(test)]
+    pub(crate) fn new_test_noop() -> Self {
+        let mut state = PlayerState::default();
+        state.available = true;
+        Self {
+            state: Arc::new(Mutex::new(state)),
+            cache: Arc::new(Mutex::new(SampleCache::default())),
+            stop: Arc::new(AtomicBool::new(true)),
+            reload: Arc::new(AtomicU64::new(0)),
+            mic: Arc::new(Mutex::new(MicState::new())),
+            mic_stop: Arc::new(AtomicBool::new(true)),
+            mic_thread: Mutex::new(None),
+            thread: Mutex::new(None),
+        }
+    }
+
     pub fn new_with_config_and_audio_backend(
         config: &crate::config::Config,
         _audio_backend: AudioBackendKind,
@@ -334,6 +352,7 @@ impl AudioPlayer {
 
         Self {
             state,
+            cache: Arc::new(Mutex::new(SampleCache::default())),
             stop,
             reload,
             mic,
@@ -424,6 +443,60 @@ impl AudioPlayer {
             .ok();
     }
 
+    /// Returns the decoded sound, reusing an earlier decode of the same file so
+    /// a hotkey press does not wait for the decoder again.
+    fn decode_cached(
+        &self,
+        path: &str,
+    ) -> Result<(Arc<Vec<f32>>, bool, Option<u64>, bool), EngineError> {
+        let metadata = std::fs::metadata(path).ok();
+        let file_len = metadata.as_ref().map(|meta| meta.len()).unwrap_or(0);
+        let modified = metadata.as_ref().and_then(|meta| meta.modified().ok());
+
+        if let Some(entry) = self.cache.lock().entries.get(path) {
+            if entry.file_len == file_len && entry.modified == modified {
+                return Ok((
+                    Arc::clone(&entry.samples),
+                    entry.mono,
+                    entry.duration_ms,
+                    true,
+                ));
+            }
+        }
+
+        let (decoded_samples, mono, duration_ms) = decode_to_samples(path)?;
+        if decoded_samples.is_empty() {
+            return Err(EngineError::Playback(format!(
+                "'{path}' contains no audio samples"
+            )));
+        }
+
+        let samples = Arc::new(decoded_samples);
+        let bytes = samples.len() * std::mem::size_of::<f32>();
+        {
+            let mut cache = self.cache.lock();
+            if cache.bytes + bytes > SAMPLE_CACHE_LIMIT_BYTES {
+                // Simplest useful policy: drop the whole cache rather than
+                // tracking ages, since a soundboard fits in it comfortably.
+                cache.entries.clear();
+                cache.bytes = 0;
+            }
+            cache.bytes += bytes;
+            cache.entries.insert(
+                path.to_string(),
+                CachedSamples {
+                    samples: Arc::clone(&samples),
+                    mono,
+                    duration_ms,
+                    file_len,
+                    modified,
+                },
+            );
+        }
+
+        Ok((samples, mono, duration_ms, false))
+    }
+
     fn stop_mic_capture(&self) {
         self.mic_stop.store(true, Ordering::Relaxed);
         let handle = self.mic_thread.lock().take();
@@ -438,6 +511,9 @@ impl AudioPlayer {
     /// installed virtual cable makes other applications hear the soundboard as
     /// an input device.
     pub fn set_mic_source(&self, source: Option<String>) -> Result<(), EngineError> {
+        // "Automatic" means follow a virtual cable when one is installed, the
+        // same routing the player picks at startup.
+        let source = source.or_else(default_virtual_cable);
         if let Some(name) = source.as_deref() {
             let host = cpal::default_host();
             if !has_output_device(&host, name) {
@@ -499,12 +575,13 @@ impl AudioPlayer {
         mute_others: bool,
         replace: bool,
     ) -> Result<String, EngineError> {
-        let (samples, mono, duration_ms) = decode_to_samples(path)?;
-        if samples.is_empty() {
-            return Err(EngineError::Playback(format!(
-                "'{path}' contains no audio samples"
-            )));
-        }
+        let started = std::time::Instant::now();
+        let (samples, mono, duration_ms, cached) = self.decode_cached(path)?;
+        debug!(
+            "play '{sound_id}' ready in {:?}{}",
+            started.elapsed(),
+            if cached { " (decoded earlier)" } else { "" }
+        );
 
         let mut state = self.state.lock();
         if !state.available {
@@ -1040,10 +1117,16 @@ fn enumerate_output_sources() -> Vec<AudioSourceInfo> {
     };
 
     let mut sources = Vec::new();
+    // WASAPI reports a render and a loopback endpoint under the same name, so
+    // the device list would otherwise show every cable twice.
+    let mut seen = std::collections::HashSet::new();
     for device in devices {
         let Ok(name) = device.name() else {
             continue;
         };
+        if !seen.insert(name.clone()) {
+            continue;
+        }
         let is_virtual = is_virtual_device_name(&name);
         debug!(
             "Windows audio output device: '{}' (virtual={is_virtual})",
@@ -1189,6 +1272,24 @@ fn write_stereo<T>(
             data[base + channel] = T::from_sample(value);
         }
     }
+}
+
+/// Decoded sounds kept in memory, so pressing a hotkey again starts playback
+/// without decoding the file a second time.
+const SAMPLE_CACHE_LIMIT_BYTES: usize = 128 * 1024 * 1024;
+
+#[derive(Default)]
+struct SampleCache {
+    entries: HashMap<String, CachedSamples>,
+    bytes: usize,
+}
+
+struct CachedSamples {
+    samples: Arc<Vec<f32>>,
+    mono: bool,
+    duration_ms: Option<u64>,
+    file_len: u64,
+    modified: Option<std::time::SystemTime>,
 }
 
 /// Half a second of captured microphone audio.
@@ -1464,6 +1565,25 @@ mod tests {
 
     fn block(frames: usize, value: f32) -> Vec<f32> {
         vec![value; frames * TARGET_OUTPUT_CHANNELS as usize]
+    }
+
+    #[test]
+    fn microphone_is_folded_into_the_cable_mix() {
+        let mut mic = MicState::new();
+        mic.available = true;
+        for _ in 0..960 {
+            mic.push(0.5, TARGET_OUTPUT_SAMPLE_RATE);
+        }
+
+        let mut block = vec![0.4_f32; 960];
+        let peak = mic.mix_into(&mut block);
+
+        assert!(
+            (peak - 0.3).abs() < 0.01,
+            "the microphone should leave headroom: {peak}"
+        );
+        assert!((block[0] - 0.7).abs() < 0.01, "sum was {}", block[0]);
+        assert!(block.iter().all(|sample| sample.abs() <= 1.0));
     }
 
     #[test]
