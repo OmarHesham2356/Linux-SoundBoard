@@ -90,6 +90,8 @@ struct Voice {
     /// Position in 48 kHz frames, fractional to allow device-rate resampling.
     position: f64,
     volume: f32,
+    /// Loudness-normalisation gain for this playback, `1.0` when untouched.
+    gain: f32,
     looping: bool,
     paused: bool,
     finished: bool,
@@ -128,6 +130,13 @@ struct PlayerState {
     active_device: Option<String>,
     /// Cached output list so snapshots never enumerate devices.
     sources: Vec<AudioSourceInfo>,
+    /// Loudness normalisation of played sounds, mirroring the Linux engine.
+    auto_gain: bool,
+    auto_gain_target_lufs: f64,
+    /// `0` applies to sounds and mic, `1` only to the mic (`AutoGainApplyTo`).
+    auto_gain_apply_to: u32,
+    loudness_boost: bool,
+    loudness_boost_db: f64,
 }
 
 impl Default for PlayerState {
@@ -144,11 +153,40 @@ impl Default for PlayerState {
             requested_device: None,
             active_device: None,
             sources: Vec::new(),
+            auto_gain: true,
+            auto_gain_target_lufs: -14.0,
+            // `MicOnly`, the default of `AutoGainApplyTo`.
+            auto_gain_apply_to: 1,
+            loudness_boost: false,
+            loudness_boost_db: 0.0,
         }
     }
 }
 
 impl PlayerState {
+    /// Gain that brings a sound measured at `lufs` up to the configured target,
+    /// kept under the true-peak ceiling so the boost cannot clip the device.
+    fn sound_gain(&self, lufs: Option<f64>, true_peak_dbtp: Option<f32>) -> f32 {
+        let mut gain_db = 0.0_f64;
+
+        if self.auto_gain && self.auto_gain_apply_to == 0 {
+            if let Some(lufs) = lufs.filter(|value| value.is_finite() && *value < 0.0) {
+                let target = self.auto_gain_target_lufs.clamp(-40.0, -5.0);
+                gain_db += (target - lufs).clamp(-24.0, 24.0);
+            }
+        }
+        if self.loudness_boost {
+            gain_db += self.loudness_boost_db.clamp(0.0, 30.0);
+        }
+        if let Some(peak) = true_peak_dbtp.filter(|value| value.is_finite()) {
+            // Keep a decibel of headroom below full scale.
+            gain_db = gain_db.min(-1.0 - peak as f64);
+        }
+
+        let gain_db = gain_db.clamp(-30.0, 24.0);
+        10_f64.powf(gain_db / 20.0) as f32
+    }
+
     fn fresh_play_id(&self, sound_id: &str) -> String {
         format!("win-{}-{}", sound_id, self.order)
     }
@@ -205,7 +243,7 @@ impl PlayerState {
                 continue;
             }
             let audible = solo.as_deref().is_none_or(|id| id == voice.play_id);
-            let volume = (voice.volume * local_volume * volume_scale).clamp(0.0, 1.0);
+            let volume = (voice.volume * local_volume * volume_scale).clamp(0.0, 1.0) * voice.gain;
             let cancel_center = mute_voice && !voice.mono;
 
             for frame in 0..frames {
@@ -241,9 +279,10 @@ impl PlayerState {
             }
         }
 
-        // Keep the sum inside the device range without a hard clip per voice.
+        // Normalisation can lift a quiet sound above full scale, so the sum is
+        // rounded off instead of hard clipped.
         for sample in output.iter_mut() {
-            *sample = sample.clamp(-1.0, 1.0);
+            *sample = soft_limit(*sample);
         }
 
         // A finished solo playback must not keep every other sound muted.
@@ -286,6 +325,12 @@ impl AudioPlayer {
             config.settings.local_volume as f32 / 100.0
         };
         player.set_local_volume(volume);
+        let settings = &config.settings;
+        player.set_auto_gain_enabled(settings.auto_gain);
+        player.set_auto_gain_target(settings.auto_gain_target_lufs);
+        player.set_auto_gain_apply_to(settings.auto_gain_apply_to.player_value());
+        player.set_loudness_boost_enabled(settings.loudness_boost);
+        player.set_loudness_boost_db(settings.loudness_boost_db);
         match config
             .settings
             .mic_source
@@ -381,13 +426,21 @@ impl AudioPlayer {
         self.mic.lock().volume = volume.clamp(0.0, 2.0);
     }
 
-    pub fn set_auto_gain_enabled(&self, _enabled: bool) {}
+    pub fn set_auto_gain_enabled(&self, enabled: bool) {
+        self.state.lock().auto_gain = enabled;
+    }
 
-    pub fn set_auto_gain_target(&self, _target_lufs: f64) {}
+    pub fn set_auto_gain_target(&self, target_lufs: f64) {
+        if target_lufs.is_finite() {
+            self.state.lock().auto_gain_target_lufs = target_lufs;
+        }
+    }
 
     pub fn set_auto_gain_mode(&self, _mode: u32) {}
 
-    pub fn set_auto_gain_apply_to(&self, _apply_to: u32) {}
+    pub fn set_auto_gain_apply_to(&self, apply_to: u32) {
+        self.state.lock().auto_gain_apply_to = apply_to;
+    }
 
     pub fn set_auto_gain_dynamic_settings(
         &self,
@@ -397,9 +450,15 @@ impl AudioPlayer {
     ) {
     }
 
-    pub fn set_loudness_boost_enabled(&self, _enabled: bool) {}
+    pub fn set_loudness_boost_enabled(&self, enabled: bool) {
+        self.state.lock().loudness_boost = enabled;
+    }
 
-    pub fn set_loudness_boost_db(&self, _boost_db: f64) {}
+    pub fn set_loudness_boost_db(&self, boost_db: f64) {
+        if boost_db.is_finite() {
+            self.state.lock().loudness_boost_db = boost_db.clamp(0.0, 30.0);
+        }
+    }
 
     pub fn set_looping(&self, enabled: bool) {
         let mut state = self.state.lock();
@@ -557,10 +616,19 @@ impl AudioPlayer {
         sound_id: &str,
         path: &str,
         base_volume: f32,
-        _sound_lufs: Option<f64>,
-        _sound_true_peak_dbtp: Option<f32>,
+        sound_lufs: Option<f64>,
+        sound_true_peak_dbtp: Option<f32>,
     ) -> Result<String, EngineError> {
-        self.play_with_options(sound_id, path, base_volume, None, None, false, false, false)
+        self.play_with_options(
+            sound_id,
+            path,
+            base_volume,
+            sound_lufs,
+            sound_true_peak_dbtp,
+            false,
+            false,
+            false,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -569,8 +637,8 @@ impl AudioPlayer {
         sound_id: &str,
         path: &str,
         base_volume: f32,
-        _sound_lufs: Option<f64>,
-        _sound_true_peak_dbtp: Option<f32>,
+        sound_lufs: Option<f64>,
+        sound_true_peak_dbtp: Option<f32>,
         looping: bool,
         mute_others: bool,
         replace: bool,
@@ -596,6 +664,13 @@ impl AudioPlayer {
         state.order = state.order.wrapping_add(1);
         let play_id = state.fresh_play_id(sound_id);
         let looping = looping || state.looping;
+        let gain = state.sound_gain(sound_lufs, sound_true_peak_dbtp);
+        if (gain - 1.0).abs() > 0.01 {
+            debug!(
+                "normalising '{sound_id}' by {:.1} dB (loudness {sound_lufs:?})",
+                20.0 * gain.log10()
+            );
+        }
         state.voices.insert(
             play_id.clone(),
             Voice {
@@ -605,6 +680,7 @@ impl AudioPlayer {
                 mono,
                 position: 0.0,
                 volume: base_volume.clamp(0.0, 1.0),
+                gain,
                 looping,
                 paused: false,
                 finished: false,
@@ -1565,6 +1641,27 @@ mod tests {
 
     fn block(frames: usize, value: f32) -> Vec<f32> {
         vec![value; frames * TARGET_OUTPUT_CHANNELS as usize]
+    }
+
+    #[test]
+    fn quiet_sounds_are_normalised_to_the_target_loudness() {
+        let mut state = PlayerState::default();
+        state.auto_gain = true;
+        state.auto_gain_apply_to = 0;
+        state.auto_gain_target_lufs = -14.0;
+
+        // -34 LUFS to -14 LUFS is +20 dB, a factor of ten.
+        let gain = state.sound_gain(Some(-34.0), None);
+        assert!((gain - 10.0).abs() < 0.5, "gain was {gain}");
+
+        // Mic-only leaves the soundboard untouched.
+        state.auto_gain_apply_to = 1;
+        assert!((state.sound_gain(Some(-34.0), None) - 1.0).abs() < 0.001);
+
+        // The true-peak ceiling wins over the loudness target.
+        state.auto_gain_apply_to = 0;
+        let limited = state.sound_gain(Some(-34.0), Some(-0.5));
+        assert!(limited < 1.0, "gain was {limited}");
     }
 
     #[test]
