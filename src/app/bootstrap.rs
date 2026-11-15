@@ -4,7 +4,6 @@ use std::cmp::Ordering;
 use std::fs::{File, OpenOptions};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-#[cfg(windows)]
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
