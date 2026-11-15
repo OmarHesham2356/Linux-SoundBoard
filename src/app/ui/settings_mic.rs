@@ -148,6 +148,86 @@ pub(super) fn build_mic_group(state: Arc<AppState>) -> adw::PreferencesGroup {
 
         mic_group.add(&mic_row);
 
+        // Windows: choose the microphone that is folded into the virtual cable.
+        #[cfg(windows)]
+        {
+            let inputs = commands::list_microphone_sources(Arc::clone(&state.player));
+            let current_input = state.config.lock().settings.mic_input.clone();
+            let input_names: Vec<String> = inputs.iter().map(|s| s.name.clone()).collect();
+            let input_labels: Vec<String> = inputs.iter().map(|s| s.display_name.clone()).collect();
+
+            let mut input_items: Vec<&str> = vec!["Automatic (Windows default input)"];
+            for label in &input_labels {
+                input_items.push(label.as_str());
+            }
+            let input_row = adw::ComboRow::builder()
+                .title("Microphone")
+                .subtitle("Which microphone is mixed into the virtual cable")
+                .build();
+            let input_model = gtk4::StringList::new(&input_items);
+            input_row.set_model(Some(&input_model));
+
+            let input_idx = current_input
+                .as_ref()
+                .and_then(|name| input_names.iter().position(|n| n == name))
+                .map(|i| (i + 1) as u32)
+                .unwrap_or(0);
+            input_row.set_selected(input_idx);
+
+            let confirmed_input = Rc::new(RefCell::new(input_idx));
+            let suppress_input = Rc::new(Cell::new(false));
+            let state5 = Arc::clone(&state);
+            let confirmed_input2 = Rc::clone(&confirmed_input);
+            let suppress_input2 = Rc::clone(&suppress_input);
+            input_row.connect_selected_notify(move |row| {
+                if suppress_input2.get() {
+                    return;
+                }
+                let idx = row.selected();
+                let previous = *confirmed_input2.borrow();
+                if idx == previous {
+                    return;
+                }
+                let source = if idx == 0 {
+                    None
+                } else {
+                    input_names.get(idx as usize - 1).cloned()
+                };
+                row.set_sensitive(false);
+                let row_weak = row.downgrade();
+                let confirmed_input3 = Rc::clone(&confirmed_input2);
+                let suppress_input3 = Rc::clone(&suppress_input2);
+                if let Err(e) = commands::set_mic_input_async(
+                    source,
+                    Arc::clone(&state5.config),
+                    Arc::clone(&state5.player),
+                    move |result| {
+                        let Some(row) = row_weak.upgrade() else {
+                            return;
+                        };
+                        match result {
+                            Ok(()) => *confirmed_input3.borrow_mut() = idx,
+                            Err(err) => {
+                                log::warn!("Set microphone failed: {err}");
+                                suppress_input3.set(true);
+                                row.set_selected(previous);
+                                suppress_input3.set(false);
+                            }
+                        }
+                        row.set_sensitive(true);
+                    },
+                ) {
+                    log::warn!("Failed to dispatch microphone change: {e}");
+                    suppress_input2.set(true);
+                    row.set_selected(previous);
+                    suppress_input2.set(false);
+                    row.set_sensitive(true);
+                }
+            });
+
+            mic_group.add(&input_row);
+        }
+
         let default_mode_row = adw::ComboRow::builder()
             .title("Microphone Routing")
             .subtitle("How apps receive the soundboard mic.")

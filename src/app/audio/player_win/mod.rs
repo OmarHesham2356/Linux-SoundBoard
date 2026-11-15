@@ -128,6 +128,8 @@ struct PlayerState {
     requested_device: Option<String>,
     /// Device the running stream is actually writing to.
     active_device: Option<String>,
+    /// Microphone chosen in the settings; `None` follows the default input.
+    mic_device: Option<String>,
     /// Cached output list so snapshots never enumerate devices.
     sources: Vec<AudioSourceInfo>,
     /// Loudness normalisation of played sounds, mirroring the Linux engine.
@@ -152,6 +154,7 @@ impl Default for PlayerState {
             error: None,
             requested_device: None,
             active_device: None,
+            mic_device: None,
             sources: Vec::new(),
             auto_gain: true,
             auto_gain_target_lufs: -14.0,
@@ -349,6 +352,9 @@ impl AudioPlayer {
             ),
         }
         player.set_mic_volume(config.settings.mic_volume as f32 / 100.0);
+        if let Err(error) = player.set_mic_input(settings.mic_input.clone()) {
+            warn!("Ignoring the saved microphone: {error}");
+        }
         if let Err(error) = player.set_mic_passthrough(config.settings.mic_passthrough) {
             warn!("Could not start microphone passthrough: {error}");
         }
@@ -496,9 +502,10 @@ impl AudioPlayer {
         self.mic_stop.store(false, Ordering::Relaxed);
         let shared = Arc::clone(&self.mic);
         let stop = Arc::clone(&self.mic_stop);
+        let requested = self.state.lock().mic_device.clone();
         *thread = thread::Builder::new()
             .name("win-mic-capture".to_string())
-            .spawn(move || run_mic_thread(shared, stop))
+            .spawn(move || run_mic_thread(shared, stop, requested))
             .ok();
     }
 
@@ -591,6 +598,69 @@ impl AudioPlayer {
         // thread is opening a device must not be cleared and forgotten.
         self.reload.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Chooses the microphone that is mixed into the virtual cable, restarting
+    /// capture so the change is heard immediately.
+    pub fn set_mic_input(&self, source: Option<String>) -> Result<(), EngineError> {
+        if let Some(name) = source.as_deref() {
+            let host = cpal::default_host();
+            let found = host
+                .input_devices()
+                .map(|devices| {
+                    devices
+                        .filter_map(|device| device.name().ok())
+                        .any(|device_name| device_name == name)
+                })
+                .unwrap_or(false);
+            if !found {
+                return Err(EngineError::Routing(format!(
+                    "'{name}' is not an available Windows recording device"
+                )));
+            }
+        }
+
+        self.state.lock().mic_device = source;
+        let capturing = {
+            let thread = self.mic_thread.lock();
+            thread.is_some()
+        };
+        if capturing {
+            self.stop_mic_capture();
+            self.start_mic_capture();
+        }
+        Ok(())
+    }
+
+    /// Recording devices offered in the settings, cables marked as such.
+    pub fn list_microphone_sources(&self) -> Vec<AudioSourceInfo> {
+        let host = cpal::default_host();
+        let Ok(devices) = host.input_devices() else {
+            return Vec::new();
+        };
+
+        let mut sources = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for device in devices {
+            let Ok(name) = device.name() else {
+                continue;
+            };
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let is_virtual = is_virtual_device_name(&name);
+            sources.push(AudioSourceInfo {
+                display_name: if is_virtual {
+                    format!("{name} (virtual)")
+                } else {
+                    name.clone()
+                },
+                node_name: name,
+                is_virtual,
+                is_hardware_backed: !is_virtual,
+            });
+        }
+        sources
     }
 
     pub fn set_default_source_mode(&self, _mode: DefaultSourceMode) -> Result<(), EngineError> {
@@ -1532,9 +1602,24 @@ fn choose_microphone(host: &cpal::Host) -> Option<cpal::Device> {
     physical.or(default)
 }
 
-fn run_mic_thread(shared: Arc<Mutex<MicState>>, stop: Arc<AtomicBool>) {
+/// The device chosen in the settings, if it is still plugged in; otherwise the
+/// automatic choice.
+fn open_microphone(host: &cpal::Host, requested: Option<&str>) -> Option<cpal::Device> {
+    if let Some(name) = requested {
+        let devices = host.input_devices().ok()?;
+        for device in devices {
+            if device.name().is_ok_and(|device_name| device_name == name) {
+                return Some(device);
+            }
+        }
+        warn!("The selected microphone '{name}' is not available; using the default input");
+    }
+    choose_microphone(host)
+}
+
+fn run_mic_thread(shared: Arc<Mutex<MicState>>, stop: Arc<AtomicBool>, requested: Option<String>) {
     let host = cpal::default_host();
-    let Some(device) = choose_microphone(&host) else {
+    let Some(device) = open_microphone(&host, requested.as_deref()) else {
         warn!("No Windows microphone was found; microphone passthrough is off");
         return;
     };

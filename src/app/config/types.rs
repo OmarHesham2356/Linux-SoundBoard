@@ -709,6 +709,10 @@ pub struct Settings {
     pub allow_multiple_playbacks: bool,
     pub mic_passthrough: bool,
     pub mic_source: Option<String>,
+    /// Windows only: the input device captured for mic passthrough. `None`
+    /// follows the Windows default input, skipping any virtual cable.
+    #[serde(default)]
+    pub mic_input: Option<String>,
     #[serde(default = "default_default_source_mode")]
     pub default_source_mode: DefaultSourceMode,
     #[serde(default)]
@@ -874,6 +878,7 @@ impl Default for Settings {
             allow_multiple_playbacks: false,
             mic_passthrough: true,
             mic_source: None,
+            mic_input: None,
             default_source_mode: DefaultSourceMode::Default,
             mic_latency_profile: MicLatencyProfile::Balanced,
             excluded_apps: Vec::new(),

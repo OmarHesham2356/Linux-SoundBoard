@@ -175,6 +175,18 @@ pub fn list_audio_sources(player: Arc<AudioPlayer>) -> Vec<AudioSource> {
         .collect()
 }
 
+#[cfg(windows)]
+pub fn list_microphone_sources(player: Arc<AudioPlayer>) -> Vec<AudioSource> {
+    player
+        .list_microphone_sources()
+        .into_iter()
+        .map(|source| AudioSource {
+            name: source.node_name,
+            display_name: source.display_name,
+        })
+        .collect()
+}
+
 pub fn active_capture_target(player: Arc<AudioPlayer>) -> Option<String> {
     player.active_capture_target()
 }
@@ -192,6 +204,39 @@ pub fn set_mic_source(
         cfg.save().map_err(CommandError::config_save)
     })??;
     Ok(())
+}
+
+#[cfg(windows)]
+pub fn set_mic_input(
+    source: Option<String>,
+    config: Arc<Mutex<Config>>,
+    player: Arc<AudioPlayer>,
+) -> Result<(), CommandError> {
+    player
+        .set_mic_input(source.clone())
+        .map_err(|e| CommandError::Engine(e.to_string()))?;
+    with_config_mut(&config, |cfg| {
+        cfg.settings.mic_input = source;
+        cfg.save().map_err(CommandError::config_save)
+    })??;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn set_mic_input_async<F>(
+    source: Option<String>,
+    config: Arc<Mutex<Config>>,
+    player: Arc<AudioPlayer>,
+    on_complete: F,
+) -> Result<(), CommandError>
+where
+    F: FnOnce(Result<(), CommandError>) + 'static,
+{
+    dispatch_async_result(
+        "set_mic_input",
+        move || set_mic_input(source, config, player),
+        on_complete,
+    )
 }
 
 pub fn set_default_source_mode(
