@@ -206,6 +206,16 @@ impl TriggerMode {
         matches!(self, Self::PushToLoop | Self::PlayAndHold)
     }
 
+    /// The order the main-page cycle button walks through.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Overlap => Self::Stop,
+            Self::Stop => Self::PushToLoop,
+            Self::PushToLoop => Self::PlayAndHold,
+            Self::PlayAndHold => Self::Overlap,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Overlap => "Play & Overlap",
@@ -971,6 +981,10 @@ mod tests {
         assert!(TriggerMode::PushToLoop.is_hold());
         assert!(!TriggerMode::Stop.is_hold());
         assert!(!TriggerMode::Overlap.is_hold());
+        assert_eq!(TriggerMode::Overlap.next(), TriggerMode::Stop);
+        assert_eq!(TriggerMode::Stop.next(), TriggerMode::PushToLoop);
+        assert_eq!(TriggerMode::PushToLoop.next(), TriggerMode::PlayAndHold);
+        assert_eq!(TriggerMode::PlayAndHold.next(), TriggerMode::Overlap);
 
         let settings = Settings {
             trigger_mode: TriggerMode::PlayAndHold,

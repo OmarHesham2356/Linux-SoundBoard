@@ -11,7 +11,8 @@ use crate::app_state::AppState;
 
 use super::helpers::begin_volume_edit;
 use super::playback::{
-    play_mode_icon, play_mode_tooltip, update_play_mode_button, update_play_pause_button,
+    play_mode_icon, play_mode_tooltip, trigger_mode_icon, trigger_mode_tooltip,
+    update_play_mode_button, update_play_pause_button, update_trigger_mode_button,
 };
 use super::{ScrubInteraction, TransportBar, TransportInner, TRANSPORT_BUTTON_SIZE};
 use crate::ui::icons;
@@ -122,7 +123,7 @@ impl TransportBar {
             build_started.elapsed().as_micros()
         );
 
-        let (local_vol_value, mic_vol_value, local_mute, mic_passthrough, play_mode) = {
+        let (local_vol_value, mic_vol_value, local_mute, mic_passthrough, play_mode, trigger_mode) = {
             let cfg = state.config.lock();
             (
                 cfg.settings.local_volume as f64,
@@ -130,6 +131,7 @@ impl TransportBar {
                 cfg.settings.local_mute,
                 cfg.settings.mic_passthrough,
                 cfg.settings.play_mode,
+                cfg.settings.trigger_mode,
             )
         };
 
@@ -280,6 +282,17 @@ impl TransportBar {
         update_play_mode_button(&playmode_btn, play_mode);
         utility_group.append(&playmode_btn);
 
+        let triggermode_btn = icons::button(
+            trigger_mode_icon(trigger_mode),
+            trigger_mode_tooltip(trigger_mode),
+        );
+        triggermode_btn.add_css_class("transport-btn");
+        triggermode_btn.add_css_class("transport-icon-btn");
+        triggermode_btn.add_css_class("transport-triggermode-btn");
+        apply_transport_button_size(&triggermode_btn);
+        update_trigger_mode_button(&triggermode_btn, trigger_mode);
+        utility_group.append(&triggermode_btn);
+
         let refresh_btn = icons::button(icons::REFRESH, "Refresh Sounds");
         refresh_btn.add_css_class("transport-btn");
         refresh_btn.add_css_class("transport-icon-btn");
@@ -337,6 +350,7 @@ impl TransportBar {
             headphones_btn: headphones_btn.clone(),
             mic_btn: mic_btn.clone(),
             playmode_btn: playmode_btn.clone(),
+            triggermode_btn: triggermode_btn.clone(),
             refresh_btn: refresh_btn.clone(),
             search_entry: search_entry.clone(),
             settings_btn: settings_btn.clone(),

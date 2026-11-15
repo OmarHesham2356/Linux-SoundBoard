@@ -15,9 +15,11 @@
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-chevron-right-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-delete-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-drop-zone-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-hold-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-keyboard-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-list-end-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-next-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-overlap-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-pause-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-play-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/lsb-play-once-symbolic.svg</file>

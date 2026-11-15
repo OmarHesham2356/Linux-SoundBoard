@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 use gtk4::ToggleButton;
 
 use crate::commands;
-use crate::config::PlayMode;
+use crate::config::{PlayMode, TriggerMode};
 
 use super::helpers::should_clear_continue_suppression;
 use super::{ContinueCursor, TransportBar, TransportInner};
@@ -89,6 +89,33 @@ pub(super) fn play_mode_tooltip(mode: PlayMode) -> &'static str {
     }
 }
 
+pub(super) fn trigger_mode_icon(mode: TriggerMode) -> icons::IconPair {
+    match mode {
+        TriggerMode::Overlap => icons::TRIGGER_OVERLAP,
+        TriggerMode::Stop => icons::STOP,
+        TriggerMode::PushToLoop => icons::PLAYMODE_LOOP,
+        TriggerMode::PlayAndHold => icons::TRIGGER_HOLD,
+    }
+}
+
+pub(super) fn update_trigger_mode_button<T>(button: &T, mode: TriggerMode)
+where
+    T: IsA<gtk4::Button> + IsA<gtk4::Widget>,
+{
+    icons::apply_button_icon(button, trigger_mode_icon(mode));
+    set_tooltip_if_changed(button, trigger_mode_tooltip(mode));
+    set_active_class(button, mode != TriggerMode::Stop);
+}
+
+pub(super) fn trigger_mode_tooltip(mode: TriggerMode) -> &'static str {
+    match mode {
+        TriggerMode::Overlap => "Sound Trigger: Play & Overlap",
+        TriggerMode::Stop => "Sound Trigger: Play & Stop",
+        TriggerMode::PushToLoop => "Sound Trigger: Push to Loop",
+        TriggerMode::PlayAndHold => "Sound Trigger: Play & Hold",
+    }
+}
+
 impl TransportBar {
     pub fn toggle_play_pause(&self) {
         let track = self.inner.active_track.borrow();
@@ -160,17 +187,19 @@ impl TransportBar {
     }
 
     pub fn refresh_controls_from_state(&self) {
-        let (local_mute, mic_passthrough, play_mode) = {
+        let (local_mute, mic_passthrough, play_mode, trigger_mode) = {
             let cfg = self.inner.state.config.lock();
             (
                 cfg.settings.local_mute,
                 cfg.settings.mic_passthrough,
                 cfg.settings.play_mode,
+                cfg.settings.trigger_mode,
             )
         };
         self.apply_headphones_state(local_mute);
         self.apply_mic_state(mic_passthrough);
         update_play_mode_button(&self.inner.playmode_btn, play_mode);
+        update_trigger_mode_button(&self.inner.triggermode_btn, trigger_mode);
     }
 
     pub(super) fn apply_headphones_state(&self, local_mute: bool) {
