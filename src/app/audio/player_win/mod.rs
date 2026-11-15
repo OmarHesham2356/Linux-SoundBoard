@@ -1467,6 +1467,27 @@ impl MicState {
         }
     }
 
+    /// One captured sample, interpolated with a Catmull-Rom spline when the
+    /// microphone and the mix run at different rates. Linear interpolation
+    /// loses a couple of decibels just below Nyquist, which is exactly where a
+    /// voice keeps its presence; an exact copy is used when the rates match.
+    fn interpolated(&self, index: u64, fraction: f32) -> f32 {
+        let at = |offset: i64| {
+            let slot = (index as i64 + offset).rem_euclid(MIC_CAPACITY_FRAMES as i64) as usize;
+            self.samples[slot]
+        };
+        if fraction == 0.0 {
+            return at(0);
+        }
+
+        let (p0, p1, p2, p3) = (at(-1), at(0), at(1), at(2));
+        let t = fraction;
+        let a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+        let b = p0 - 2.5 * p1 + 2.0 * p2 - 0.5 * p3;
+        let c = -0.5 * p0 + 0.5 * p2;
+        ((a * t + b) * t + c) * t + p1
+    }
+
     fn push(&mut self, sample: f32, rate: u32) {
         self.rate = rate;
         let slot = self.written as usize % MIC_CAPACITY_FRAMES;
@@ -1492,36 +1513,40 @@ impl MicState {
         }
 
         // The microphone and the cable run on independent device clocks, so the
-        // buffer slowly drifts. Nudging the read rate keeps it near the middle of
-        // the ring instead of cutting a hole in the voice every few seconds.
-        let correction = if backlog < 2_000 {
-            0.998
+        // buffer slowly drifts. Correcting it once per block by a single frame
+        // keeps the pitch exact: scaling the read rate instead bends the pitch
+        // for as long as the correction lasts, which colours a held note.
+        let advance_extra = if backlog < 2_000 {
+            -1.0
         } else if backlog > 8_000 {
-            1.002
-        } else {
             1.0
+        } else {
+            0.0
         };
 
         // Leave headroom for the voice instead of summing two hot signals into a
-        // hard clip, which is what made the mix sound crunchy.
-        let headroom = (1.0 - peak_of(block)).clamp(0.35, 1.0);
+        // hard clip, which is what made the mix sound crunchy. The floor keeps
+        // the voice clearly present under a loud soundboard instead of ducking it
+        // away.
+        let headroom = (1.0 - peak_of(block)).clamp(0.6, 1.0);
         let gain = self.volume * headroom;
         let mut mic_peak = 0.0_f32;
 
         for frame in 0..frames {
             let index = self.read as u64;
-            if index + 2 > self.written {
+            if index + 3 >= self.written {
                 break;
             }
             let fraction = (self.read - index as f64) as f32;
-            let first = self.samples[index as usize % MIC_CAPACITY_FRAMES];
-            let second = self.samples[(index as usize + 1) % MIC_CAPACITY_FRAMES];
-            let sample = (first + (second - first) * fraction) * gain;
+            let sample = self.interpolated(index, fraction) * gain;
             mic_peak = mic_peak.max(sample.abs());
             let base = frame * channels;
             block[base] += sample;
             block[base + 1] += sample;
-            self.read += step * correction;
+            self.read += step;
+        }
+        if advance_extra != 0.0 {
+            self.read = (self.read + advance_extra).max(0.0);
         }
 
         for sample in block.iter_mut() {
@@ -1749,6 +1774,55 @@ mod tests {
 
     fn block(frames: usize, value: f32) -> Vec<f32> {
         vec![value; frames * TARGET_OUTPUT_CHANNELS as usize]
+    }
+
+    #[test]
+    fn a_microphone_at_the_mix_rate_reaches_the_cable_unchanged() {
+        let mut mic = MicState::new();
+        mic.enabled = true;
+        mic.available = true;
+        mic.volume = 1.0;
+
+        let voices: Vec<f32> = (0..4_096)
+            .map(|frame| (frame as f32 * 0.01).sin() * 0.5)
+            .collect();
+        for value in &voices {
+            mic.push(*value, TARGET_OUTPUT_SAMPLE_RATE);
+        }
+
+        let frames = 1_000;
+        let mut block = block(frames, 0.0);
+        mic.mix_into(&mut block);
+
+        for frame in 0..frames {
+            let left = block[frame * TARGET_OUTPUT_CHANNELS as usize];
+            assert_eq!(left, voices[frame], "frame {frame} was altered");
+            let right = block[frame * TARGET_OUTPUT_CHANNELS as usize + 1];
+            assert_eq!(
+                right, voices[frame],
+                "frame {frame} was altered on the right"
+            );
+        }
+    }
+
+    #[test]
+    fn a_loud_soundboard_does_not_duck_the_voice_away() {
+        let mut mic = MicState::new();
+        mic.enabled = true;
+        mic.available = true;
+        mic.volume = 1.0;
+        for _ in 0..4_096 {
+            mic.push(0.4, TARGET_OUTPUT_SAMPLE_RATE);
+        }
+
+        let frames = 480;
+        let mut block = block(frames, 0.9);
+        let voice_peak = mic.mix_into(&mut block);
+
+        assert!(
+            voice_peak > 0.4 * 0.55,
+            "the voice was ducked to {voice_peak:.3}"
+        );
     }
 
     #[test]
