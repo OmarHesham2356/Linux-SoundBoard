@@ -37,6 +37,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
+Name: "vbcable"; Description: "Open the VB-CABLE download page (the virtual microphone driver Windows needs)"; GroupDescription: "Requirements:"
 
 [Files]
 Source: "..\..\dist\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -47,4 +48,7 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
+; Windows has no virtual microphone of its own, so VB-CABLE is part of the
+; setup: the box is ticked and opens the official download page at the end.
+Filename: "https://vb-audio.com/Cable/"; Tasks: vbcable; Description: "Download VB-CABLE (required for the virtual microphone)"; Flags: shellexec postinstall nowait skipifsilent
 Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

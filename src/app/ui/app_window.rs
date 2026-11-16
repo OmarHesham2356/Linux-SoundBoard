@@ -24,6 +24,10 @@ use super::transport::TransportBar;
 
 const MAX_SIDEBAR_WIDTH: i32 = 600;
 
+/// Where Windows users get the virtual audio cable this port requires.
+#[cfg(windows)]
+const VB_CABLE_DOWNLOAD_URL: &str = "https://vb-audio.com/Cable/";
+
 fn cap_sidebar_width(width: i32) -> i32 {
     width.min(MAX_SIDEBAR_WIDTH)
 }
@@ -59,9 +63,9 @@ fn virtual_microphone_banner(state: &AppState) -> Option<String> {
             return None;
         }
         Some(
-            "No virtual microphone detected — install a virtual audio cable \
-             (for example VB-CABLE) and select it under Preferences → Audio → \
-             Soundboard Output."
+            "No virtual microphone detected — this needs a virtual audio cable. \
+             Install VB-CABLE with the button below, then pick it under \
+             Preferences → Audio → Soundboard Output."
                 .to_string(),
         )
     }
@@ -104,9 +108,28 @@ pub fn build_window(
 
     if let Some(message) = virtual_microphone_banner(&state) {
         let banner = adw::Banner::new(&message);
-        banner.set_button_label(Some("Dismiss"));
         banner.set_revealed(true);
-        banner.connect_button_clicked(|b| b.set_revealed(false));
+
+        #[cfg(windows)]
+        {
+            banner.set_button_label(Some("Download VB-CABLE"));
+            banner.connect_button_clicked(|banner| {
+                banner.set_revealed(false);
+                if let Err(error) = gtk4::gio::AppInfo::launch_default_for_uri(
+                    VB_CABLE_DOWNLOAD_URL,
+                    None::<&gtk4::gio::AppLaunchContext>,
+                ) {
+                    log::warn!("Could not open {VB_CABLE_DOWNLOAD_URL}: {error}");
+                }
+            });
+        }
+
+        #[cfg(not(windows))]
+        {
+            banner.set_button_label(Some("Dismiss"));
+            banner.connect_button_clicked(|banner| banner.set_revealed(false));
+        }
+
         root_box.append(&banner);
     }
 
